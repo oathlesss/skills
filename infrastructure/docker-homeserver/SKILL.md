@@ -54,6 +54,31 @@ docker compose up -d tailscale
 # Once healthy, remove the key from .env
 ```
 
+### Isolating Tailscale with Profiles (Survive `docker compose down`)
+
+When working on the server remotely via Tailscale, `docker compose down` kills the VPN and kicks you off. Use a **Compose profile** to exclude Tailscale from the default `down` scope:
+
+```yaml
+tailscale:
+  # ... same config as above ...
+  profiles:
+    - always-on
+```
+
+With this in place:
+
+| Command | Effect |
+|---|---|
+| `docker compose --profile always-on up -d` | Start everything including Tailscale |
+| `docker compose down` | Stop everything **except** Tailscale |
+| `docker compose --profile always-on down` | Stop everything including Tailscale |
+
+**How it works:** Services with `profiles` are only included when `--profile <name>` is passed. Without the flag, `docker compose down` ignores profiled services entirely. Tailscale has `network_mode: host` and no dependencies on the `homeserver` bridge network, so there's no coupling to the rest of the stack — it can run independently while the main services cycle.
+
+**Migration (no downtime):** If Tailscale was already running without profiles, just run `docker compose --profile always-on up -d` — Compose recognizes the existing container and leaves it alone. No restart, no kick-off.
+
+**Generic pattern:** Any infrastructure service that should outlive the main stack (VPN, monitoring agent, syslog forwarder) can use this same `profiles: [always-on]` trick. The only requirement is that the service has no network dependencies on the other Compose services (e.g. uses `network_mode: host` or its own external network).
+
 ## Security: Credential Handling
 
 **⚠️ PITFALL: Never read .env files or pass secrets in shell commands.** Secrets extracted from `.env` and interpolated into `curl -u`, `grep`, or similar commands are visible in process listings and shell history. The agent should NEVER read credential files or construct authenticated commands that include passwords on the command line.
@@ -325,12 +350,37 @@ fi
 
 Cron job:
 ```
-cronjob action=create no_agent=true schedule="every 2m" script="push-gateway-status.sh" deliver=local
+cronjob action=create no_agent=true schedule="every 1m" script="push-gateway-status.sh" deliver=local
 ```
 
 **Why `no_agent=true`:** No LLM tokens per tick — the script IS the job. Perfect for simple health checks that fit in a shell one-liner.
 
 **Token generation:** Uptime Kuma push tokens are stored in `monitor.push_token` (VARCHAR(20)). Generate with `secrets.token_hex(10)[:20]` in Python.
+
+### ⚠️ PITFALL: Cron interval must be ≤ half the monitor interval
+
+If your cron schedule matches or closely approaches the Uptime Kuma heartbeat window, **any scheduling jitter will cause false DOWN alerts**. Hermes cron jobs can be delayed by agent processing, and the scheduler itself has natural jitter. Both monitors will flap simultaneously because they share the same cron engine.
+
+**The ratio rule:** `cron_interval ≤ monitor_interval / 2`. With a 180s Uptime Kuma window, run cron no slower than every 90s. With a 120s window, every 60s.
+
+**Diagnosing interval-matching flapping:** Query the heartbeat table. If both push monitors show alternating UP/DOWN in lockstep, the cron interval is too close to the Uptime Kuma window:
+
+```bash
+docker exec uptime-kuma sqlite3 /app/data/kuma.db \
+  "SELECT m.name, h.status, h.msg, datetime(h.time, 'unixepoch', 'localtime')
+   FROM heartbeat h JOIN monitor m ON m.id = h.monitor_id
+   WHERE m.type='push' ORDER BY h.time DESC LIMIT 20;"
+```
+
+Status codes: 1=UP, 0=DOWN. Alternating lockstep = interval match. Fix by reducing cron interval or widening the Uptime Kuma interval:
+
+```bash
+# Widen both push monitors to 180s (no restart needed)
+docker exec uptime-kuma sqlite3 /app/data/kuma.db \
+  "UPDATE monitor SET interval = 180 WHERE type = 'push';"
+```
+
+Monitor interval changes take effect immediately — no Uptime Kuma restart required.
 
 ## Uptime Kuma Monitoring
 
@@ -341,5 +391,5 @@ See `references/uptime-kuma-monitors.md` for the full workflow: DB schema, inser
 ## References
 
 - `references/uptime-kuma-monitors.md` — programmatic monitor creation, DB schema, pitfall guide
-- `references/compose-example.yaml` — full working Tailscale compose snippet
+- `references/compose-profiles-example.yaml` — full Tailscale compose snippet (with and without profiles)
 - `templates/push-uptime-kuma.sh` — starter script for Uptime Kuma push monitors via Hermes cron

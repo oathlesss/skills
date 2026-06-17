@@ -1,0 +1,63 @@
+# Tailscale with Profiles — Complete Compose Snippet
+
+This is the full working Tailscale service definition from the homelab stack.
+Copy the `tailscale` block into your `docker-compose.yml` under `services:`.
+
+## With profiles (recommended — survives `docker compose down`)
+
+```yaml
+  # ════════════════════════════════════════
+  # TAILSCALE (mesh VPN — access from anywhere)
+  #   Use --profile always-on to include Tailscale:
+  #     docker compose --profile always-on up -d
+  #     docker compose down                  # leaves Tailscale running
+  #     docker compose --profile always-on down  # stops everything
+  # ════════════════════════════════════════
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale
+    restart: unless-stopped
+    profiles:
+      - always-on
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./tailscale/state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - TS_HOSTNAME=homelab
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
+      - TS_EXTRA_ARGS=--accept-routes
+```
+
+## Without profiles (legacy — Tailscale dies on `docker compose down`)
+
+```yaml
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./tailscale/state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - TS_HOSTNAME=homelab
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
+      - TS_EXTRA_ARGS=--accept-routes
+```
+
+## Key points
+
+- `network_mode: host` means Tailscale assigns a `100.x.x.x` IP to the entire machine — all services (SSH, Caddy, Minecraft) are reachable through it without per-service changes.
+- `profiles: [always-on]` keeps Tailscale alive when `docker compose down` is run without `--profile always-on`.
+- `./tailscale/state` persists the identity. Auth key is only needed for the first run.
+- Do NOT add `--ssh` if the host already has sshd — it clashes with the system SSH daemon.
+- `--accept-routes` allows the machine to route to other tailnet subnets advertised by other nodes.

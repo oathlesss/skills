@@ -98,3 +98,29 @@ terse prose). "stop ponytail" / "normal mode": revert. Level persists until
 changed or session end.
 
 The shortest path to done is the right path.
+
+## Platform-native pitfalls
+
+Some platforms have "obvious" features that hide sign-error minefields:
+
+- **Godot `up_direction`-relative vector math**: Expressing gravity, movement,
+  and jump as vectors relative to a rotating `up_direction` introduces 3+
+  sign errors per attempt (tangent rotation direction, jump impulse sign, cut
+  condition polarity). Each fix tends to reintroduce a previous bug. Prefer
+  screen-space physics (gravity always ↓, jump always ↑) with
+  `floor_max_angle = PI` for basic wall/ceiling sticking. See
+  `references/godot-platformer-sticking.md` for the full pattern and when to
+  upgrade.
+
+- **Friction axis mismatch**: When sticking to walls, residual velocity is on
+  the Y axis but friction often only damps X. Dampen the full vector:
+  `velocity = velocity.move_toward(Vector2.ZERO, friction)`.
+
+## Fix cascades
+
+When the user reports a bug, apply the SINGLE min-diff fix and verify. Do not
+bundle unrelated changes into the same commit. If the fix reintroduces an
+earlier bug, the user will catch it and tell you — "don't reintroduce old
+bugs" is a standing instruction. The root cause is usually sign errors in
+coordinate-system math; downgrade to screen-space rather than fixing signs one
+by one.

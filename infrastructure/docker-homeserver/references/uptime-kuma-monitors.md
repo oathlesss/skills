@@ -108,7 +108,7 @@ Push monitors have `type = 'push'` and a unique `push_token` (VARCHAR(20)):
 ```bash
 docker compose exec -T uptime-kuma sqlite3 /app/data/kuma.db << 'EOSQL'
 INSERT INTO monitor (name, active, user_id, interval, type, weight, push_token, created_date, maxretries, retry_interval, timeout)
-VALUES ('Discord Gateway', 1, 1, 120, 'push', 2000, '<random_hex_20>', datetime('now'), 0, 120, 48);
+VALUES ('Discord Gateway', 1, 1, 180, 'push', 2000, '<random_hex_20>', datetime('now'), 0, 120, 48);
 EOSQL
 ```
 
@@ -146,9 +146,32 @@ cronjob action=create schedule="every 2m" script="push-gateway-status.sh"
 
 The script's stdout goes nowhere (local delivery); only non-zero exits trigger error alerts. This pattern works for any CLI check: `hermes status`, `systemctl is-active <unit>`, `docker compose ps <service>`, etc.
 
-### Pitfall: push interval vs. monitor interval
+### Pitfall: Push interval vs. monitor interval (MUST be staggered)
 
-The monitor's `interval` field tells Uptime Kuma when to expect the next heartbeat. If no heartbeat arrives within `interval` seconds, the monitor goes DOWN. Set `interval` slightly longer than the cron schedule to allow for jitter (e.g. cron every 2m → monitor interval 120s).
+**⚠️ DO NOT match the cron interval to the monitor interval.** With cron at `every 2m` and monitor at `120s`, any scheduling jitter (which Hermes cron has — agent processing delays ticks) will miss the window and both push monitors will flap DOWN simultaneously in lockstep.
+
+**The ratio rule:** `cron_interval ≤ monitor_interval / 2`. At minimum, the monitor interval should be at least **double** the cron interval. Practical combos:
+- Cron `every 1m` + monitor `180s` (3 heartbeats per window, very safe)
+- Cron `every 1m` + monitor `120s` (2 heartbeats per window)
+- Cron `every 30s` + monitor `120s` (4 heartbeats per window)
+
+**Diagnosing flapping:** The heartbeat table reveals the lockstep pattern — both push monitors going UP/DOWN together:
+
+```bash
+docker exec uptime-kuma sqlite3 /app/data/kuma.db \
+  "SELECT m.name, h.status, h.msg
+   FROM heartbeat h JOIN monitor m ON m.id = h.monitor_id
+   WHERE m.type='push' ORDER BY h.time DESC LIMIT 20;"
+```
+
+Status `0` = DOWN (missed heartbeat window), `1` = UP. If both monitors show `0` on the same rows and `1` on the same rows, it's interval-matching flapping, not a real outage.
+
+**Fix:** Either reduce the cron interval or widen the monitor interval (takes effect immediately, no restart needed):
+
+```bash
+docker exec uptime-kuma sqlite3 /app/data/kuma.db \
+  "UPDATE monitor SET interval = 180 WHERE type = 'push';"
+```
 
 ### Pitfall: Stale DOWN heartbeat after fixing a monitor
 
@@ -176,5 +199,5 @@ The UI updates on the next WebSocket event — no restart needed. If it still sh
 | TCP port | 120s | Game servers, databases |
 | Ping | 300s | Internet connectivity, no need for granularity |
 | DNS | 300s | DNS rarely changes quickly |
-| Push | 120s | Service liveness, allow for schedule jitter |
+| Push | 180s | Service liveness via Hermes cron — must be ≥ 2× the cron schedule |
 | Certificate | 86400s | Daily is sufficient |

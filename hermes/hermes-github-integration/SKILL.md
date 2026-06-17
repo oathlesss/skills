@@ -5,8 +5,12 @@ triggers:
   - Connecting Hermes to GitHub
   - Setting up `gh` CLI on the homeserver
   - GitHub token or auth questions
+  - Skills sync or backup to GitHub
   - "give you access to my repos"
   - "connect to GitHub"
+  - Resetting / starting fresh on a repo ("reset the repository", "start fresh")
+  - Creating or managing GitHub issues / labels / milestones
+  - Working with GitHub repos in any capacity
 ---
 
 # Hermes GitHub Integration
@@ -152,7 +156,13 @@ After setup, create a cron job that polls `gh notifications` and surfaces new it
 
 ## Ongoing Usage
 
-Once authed, use `gh` commands normally. The `GH_TOKEN` env var must be set in the environment. For `execute_code` scripts, read from config and set `env={**os.environ, "GH_TOKEN": token}`. For `terminal` commands, prefix with `GH_TOKEN=$(hermes config get github.token) gh ...`.
+Once authed, use `gh` commands normally.
+
+- **Git operations (push/pull/clone):** work directly after `gh auth setup-git` — no token env var needed. `git push`, `git pull`, `git clone` all use the `gh` credential helper transparently.
+- **`gh` CLI commands (`gh issue`, `gh api`, `gh repo`):** require `GH_TOKEN` in the environment.
+  - **For `execute_code` scripts:** read from config and set `env={**os.environ, "GH_TOKEN": token}`.
+  - **For `terminal` commands:** extract the token inline via python3 — see `references/shell-script-patterns.md` for the pattern and pitfalls. The live script at `~/.hermes/scripts/sync-skills.sh` is the canonical implementation.
+  - **Writing shell scripts:** use `execute_code` to avoid secret-scanner corruption of `$(...)` patterns (documented in `references/shell-script-patterns.md`).
 
 Common commands:
 - `gh repo list` — list user repos
@@ -161,3 +171,12 @@ Common commands:
 - `gh pr list` / `gh pr view` / `gh pr review`
 - `gh search repos <query>` / `gh search issues <query>`
 - `gh notifications` — list unread notifications
+- `gh label list` / `gh label create` / `gh issue edit --add-label`
+
+## Repo Operations
+
+**Fresh-start / reset a repo (archive + wipe):** See `references/repo-fresh-start.md` for the full workflow: archive current work to a branch, create an orphan replacement for main, force push both.
+
+**Issue and label management:** See `references/issue-management.md` for creating structured issues, managing labels, and pitfalls (labels silently ignored on create, comma formatting).
+
+⚠️ **PITFALL — lost upstream after force push:** After force-pushing main (or deleting + recreating it), the branch loses its upstream tracking. `git push` will fail with "no upstream branch." Always use `git push --set-upstream origin main` (or `-u`) on the first push after a force push or branch recreation.

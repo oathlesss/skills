@@ -27,7 +27,7 @@ git init
 git config user.email "rubenhesselink@pm.me"
 git config user.name "Diaktoros"
 gh auth setup-git                           # wire credential helper
-git remote add origin https://github.com/oathlesss/hermes-skills.git
+git remote add origin https://github.com/oathlesss/skills.git
 echo ".curator_state" >> .gitignore
 echo ".usage.json" >> .gitignore
 echo ".usage.json.lock" >> .gitignore
@@ -38,38 +38,14 @@ git push -u origin main
 
 ## Cron Job
 
-Every 12 hours — commit any changes and push. Use a script (not inline shell) so it can be idempotent and lock-guarded:
+Every 12 hours — commit any changes and push. The canonical implementation lives at `~/.hermes/scripts/sync-skills.sh`. It is:
 
-```bash
-#!/bin/bash
-# ~/.hermes/scripts/sync-skills.sh
-SKILLS_DIR="$HOME/.hermes/skills"
-LOCKFILE="$HOME/.hermes/cron/.skills-sync.lock"
+- **Idempotent** — file-locked via `flock` so overlapping cron invocations skip silently
+- **Token-aware** — reads GH_TOKEN from `~/.hermes/config.yaml` via python3 (since `hermes config get` returns exit code 2 for set keys)
+- **Change-only** — `git diff --cached --quiet` prevents empty commits
+- **Self-contained** — no hardcoded paths beyond `$HOME/.hermes`
 
-exec 9>"$LOCKFILE"
-if ! flock -n 9; then
-    exit 0  # another sync is running, skip silently
-fi
-
-cd "$SKILLS_DIR" || exit 1
-git add -A
-if git diff --cached --quiet; then
-    exit 0  # nothing to commit
-fi
-git commit -m "auto: skills sync $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-git push
-```
-
-Set the cron with `no_agent: true` (script-only, no LLM needed):
-
-```
-hermes cron create \
-  --name "Skills Sync → GitHub" \
-  --schedule "every 12h" \
-  --script "sync-skills.sh" \
-  --no-agent \
-  --deliver "local"
-```
+Open the live script for the exact implementation. The cron job was created with: `action='create', schedule='every 12h', prompt='Run the script', deliver='local'`.
 
 ## Pitfalls
 

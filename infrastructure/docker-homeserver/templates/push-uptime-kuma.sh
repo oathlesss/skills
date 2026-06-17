@@ -6,8 +6,12 @@
 # Replace the 'hermes gateway status' check with your actual health check command.
 #
 # This template is designed for Hermes no-agent cron jobs:
-#   cronjob action=create schedule="every 2m" script="push-uptime-kuma.sh"
+#   cronjob action=create schedule="every 1m" script="push-uptime-kuma.sh"
 #         no_agent=true deliver=local
+#
+# IMPORTANT: cron interval must be ≤ half the Uptime Kuma monitor interval.
+# If the monitor expects a heartbeat within 180s, run cron every 90s or faster.
+# Matching them (e.g. both 120s) will cause false DOWN alerts from scheduler jitter.
 
 KUMA_URL="https://status.oathless.dev"
 PUSH_TOKEN="TOKEN"
