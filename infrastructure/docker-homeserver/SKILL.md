@@ -12,6 +12,7 @@ triggers:
   - Any task involving credentials — .env files, passwords in shell commands
   - Setting up or modifying Uptime Kuma monitors, status pages, or notifications
   - Uptime Kuma API exploration, database inspection, or programmatic monitor creation
+  - Hardware inspection, storage capacity analysis, or upgrade planning for the homeserver machine
 ---
 
 # Docker Homeserver Patterns
@@ -495,6 +496,85 @@ Uptime Kuma v1.x handles admin operations (monitor CRUD) via Socket.IO, not REST
 
 See `references/uptime-kuma-monitors.md` for the full workflow: DB schema, insert templates, restart, verification, and common pitfalls (DNS resolution from Docker, DB ownership, empty status pages, Docker hostnames for port checks).
 
+## Hardware Upgrades: Verify Before Recommending
+
+**⚠️ PITFALL: Don't recommend hardware upgrades without first verifying the physical machine has the slot/bay.** SATA controllers in lspci don't prove a physical bay exists — the silicon may be on the board but the chassis may lack the mounting point. Always:
+
+1. **Inspect what the kernel sees** — sysfs SATA ports, NVMe model, PCIe link, current drives (see `references/linux-hardware-inspection.md`)
+2. **Cross-reference with the service manual** — Dell's manual for this specific model/form-factor confirms bay existence
+3. **Check for the specific form factor** — Micro/SFF/Tower variants of the same model have different internal layouts. The DMI `product_name` may not include the form factor (e.g. just "OptiPlex 3070"), so check the motherboard P/N against known references
+4. **If direct web research is bot-blocked** (Dell, Reddit, eBay, Google all block curl-based requests), use `delegate_task` with `web` + `browser` toolsets — the subagent's user-agent handling can bypass the CDN bot detection that blocks direct curl/search approaches — see `references/optiplex-3070-micro-hardware.md` for the confirmed specs on this machine
+
+## Minecraft Server — itzg/minecraft-server
+
+The stack uses `itzg/minecraft-server:latest` for the Minecraft service. This image supports vanilla, mod loaders (Forge, Neoforge, Fabric), and modpack platforms (CurseForge, Modrinth, FTB, Packwiz) via the `TYPE` or `MODPACK_PLATFORM` env var.
+
+### Switching to a CurseForge Modpack (AUTO_CURSEFORGE)
+
+To install a CurseForge modpack (e.g. "Integrated Minecraft"), switch from a mod loader type to `AUTO_CURSEFORGE`:
+
+1. **Get a CurseForge API key** from https://console.curseforge.com/ — required for the auto-download feature
+2. Add it to `.env` as `CF_API_KEY='...'` (wrap in single quotes)
+3. Update `docker-compose.yml`:
+
+```yaml
+minecraft:
+  environment:
+    TYPE: "AUTO_CURSEFORGE"
+    CF_API_KEY: ${CF_API_KEY}
+    CF_SLUG: "integrated-minecraft"          # or CF_PAGE_URL for the full URL
+    MEMORY: "8G"
+```
+
+4. **Back up the existing world** before restarting — the modpack's MC version likely differs and the world won't be compatible
+5. `docker compose up -d minecraft`
+
+**⚠️ PITFALL: World incompatibility.** Switching mod loader type or MC version will break existing worlds. Always back up `./minecraft/data/world/` before changing `TYPE` or `VERSION`.
+
+**⚠️ PITFALL: `server.properties` doesn't auto-update.** The itzg image generates `server.properties` on first run from environment variables — but once it exists, subsequent env var changes are **ignored**. When changing variables that affect `server.properties` (e.g. `ONLINE_MODE`, `RCON_PASSWORD`, `DIFFICULTY`), **delete the file first** before restarting:
+```bash
+rm -f ./minecraft/data/server.properties
+docker compose up -d minecraft
+```
+
+**⚠️ PITFALL: Java version mismatch.** The `itzg/minecraft-server:latest` image runs Java 25, but many modpacks target specific Java versions. Forge 1.20.1 modpacks (like Integrated Minecraft) need **Java 17**. Running on the wrong Java version produces `Unsupported class file major version 69` (Java 25 bytecode vs ASM library that only supports up to Java 21). Fix by pinning the correct image tag:
+
+| Minecraft Version | Image Tag |
+|---|---|
+| 1.20.x (Forge) | `itzg/minecraft-server:java17` |
+| 1.21.x (Neoforge) | `itzg/minecraft-server:java21` |
+| Latest | `itzg/minecraft-server:latest` (Java 25) |
+
+The major version numbers in the error map as: 61=Java 17, 65=Java 21, 69=Java 25.
+
+**⚠️ PITFALL: `$` in API keys.** CurseForge API keys often contain `$` characters (e.g. `$2a$10$...`). In `.env` files, **always wrap the key in single quotes** — without quotes, Docker Compose interprets `$2a`, `$10` etc. as variable names and substitutes them to empty strings, silently mangling the key. The container receives a truncated value and `mc-image-helper` fails with "Access to https://api.curseforge.com is forbidden." 
+
+In the YAML, reference the env var normally (no extra escaping):
+```yaml
+CF_API_KEY: ${CF_API_KEY}   # correct — grabs the quoted value from .env
+```
+
+In `.env`:
+```
+CF_API_KEY='***'   # single quotes prevent $ expansion
+```
+
+**Diagnose** with `docker inspect minecraft --format '{{range .Config.Env}}{{println .}}{{end}}' | grep CF_API_KEY` to see what the container actually received.
+
+### Useful AUTO_CURSEFORGE variables
+
+| Variable | Purpose |
+|---|---|
+| `CF_SLUG` | Short identifier from the modpack URL (e.g. `integrated-minecraft`) |
+| `CF_PAGE_URL` | Full CurseForge modpack page URL |
+| `CF_FILE_ID` | Pin to a specific file version |
+| `CF_FILENAME_MATCHER` | Substring match to pin a version (e.g. `1.0.7`) |
+| `CF_EXCLUDE_MODS` | Newline-delimited list of mod slugs to exclude |
+| `CF_OVERRIDES_EXCLUSIONS` | Ant-style paths to exclude from overrides extraction |
+| `CF_PARALLEL_DOWNLOADS` | Parallel mod downloads (default: 4) |
+
+See `references/minecraft-curseforge-modpacks.md` for the full extraction from itzg docs, including pinning versions, excluding client-side mods, Fabric/Forge mod detection, Forge 1.20.1 handshake strictness, stress-testing with RCON and forceload, and handling world data.
+
 ## References
 
 - `references/couchdb-livesync-config.md` — required CouchDB config (single-node + CORS) for Obsidian Live Sync
@@ -503,3 +583,6 @@ See `references/uptime-kuma-monitors.md` for the full workflow: DB schema, inser
 - `references/uptime-kuma-monitors.md` — programmatic monitor creation, DB schema, pitfall guide
 - `references/github-integration.md` — fine-grained PAT scoping, `gh` CLI auth, org isolation
 - `templates/push-uptime-kuma.sh` — starter script for Uptime Kuma push monitors via Hermes cron
+- `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
+- `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)
+- `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers

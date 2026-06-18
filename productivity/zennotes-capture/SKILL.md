@@ -8,6 +8,8 @@ triggers:
   - "note this"
   - "remember this for later"
   - "write this down"
+  - "make a note in ZenNotes"
+  - "you didn't make a note"  # self-correction: user called out missed capture — write it now
 ---
 
 # ZenNotes Capture
@@ -16,11 +18,20 @@ Proactively save noteworthy discussions to Ruben's ZenNotes vault at `/home/rube
 
 ## When to capture
 
+**MANDATORY: After completing substantive research or a knowledge-heavy task, capture automatically.** Do not wait for Ruben to ask. If you just did a multi-tool research session, produced a detailed answer with code/examples, or compiled technical reference material — write the note in the same turn you deliver the answer. He will call it out if you don't.
+
+**Self-check (run before ending every research turn):**
+1. Did I use web_search, delegate_task, or any research tooling in this turn?
+2. Is the answer I'm about to deliver more than a short paragraph?
+3. Did I already write this to ZenNotes?
+
+If (1 AND 2) and NOT 3 → you are about to fail. Write the note NOW, before sending your final summary. This is the most common failure mode. If you skip this check and the user says "you didn't make a note," you've broken the contract — apologize immediately and write it.
+
 Save a note whenever we discuss something that has lasting value:
 
+- **Research** — findings, comparisons, benchmarks, things learned. **This is #1.** If you used web_search, delegate_task, or any research tooling and the answer is more than a paragraph, it's a note.
 - **Decisions** — why we chose X over Y, architectural decisions, tool/tech choices
 - **Ideas** — project concepts, feature ideas, things to explore later
-- **Research** — findings, comparisons, benchmarks, things learned
 - **Plans** — roadmaps, next steps, implementation strategies
 - **Technical discoveries** — bugs and their root causes, workarounds, configuration quirks
 - **References** — useful links, docs, commands worth remembering
@@ -66,7 +77,12 @@ If multiple distinct topics were discussed, create separate notes.
 
 ## Pitfalls
 
+- **Don't forget to capture research.** This is the most common failure mode. If you just did a multi-tool research task, write the note immediately — don't wait for the user to ask. If the user says "you didn't make a note", apologize and write it now.
 - Don't over-capture — not every message is a note. Err on the side of quality over quantity.
 - Don't capture things that are purely actionable (those go in memory/todos)
-- If unsure whether something is note-worthy, ask quickly rather than skipping it
 - The vault lives on the local filesystem — ensure the path is writable before writing
+- Filename convention is flexible — semantic names like `minecraft-modding-research-2026.md` are fine alongside the date-prefixed format. Just make it searchable and descriptive.
+
+## References
+
+- `references/research-refinement-pattern.md` — Multi-round research workflow: overview → deep-dive → plan. When to merge notes vs create separate ones.
