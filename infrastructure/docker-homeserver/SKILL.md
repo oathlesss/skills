@@ -1,6 +1,6 @@
 ---
 name: docker-homeserver
-description: Patterns for Docker Compose homeserver services — VPN tunnels, reverse proxies, CouchDB, health checks, credential safety, and auth key handling.
+description: Patterns for Docker Compose homeserver services — VPN tunnels, reverse proxies, CouchDB, ZenNotes, health checks, credential safety, and auth key handling.
 triggers:
   - Adding or checking any service in an existing docker-compose.yml
   - Setting up Tailscale, Cloudflare Tunnel, or WireGuard in Docker
@@ -8,6 +8,7 @@ triggers:
   - Remote access / VPN for a Docker homeserver
   - Verifying whether a homeserver service is healthy
   - CouchDB setup for Obsidian Live Sync or general document storage
+  - ZenNotes web-based notes setup for agent-accessible vaults
   - Any task involving credentials — .env files, passwords in shell commands
   - Setting up or modifying Uptime Kuma monitors, status pages, or notifications
   - Uptime Kuma API exploration, database inspection, or programmatic monitor creation
@@ -154,6 +155,12 @@ When verifying a Docker Compose service is working, follow this sequence:
 
 ## CouchDB for Obsidian Sync
 
+> **Note:** This configuration is historical — the user may not be actively self-hosting Obsidian sync anymore. CouchDB may still be running for other purposes. Check the current state before assuming this is active.
+
+### Critical: Configuration File
+
+CouchDB starts in clustered mode with CORS disabled by default — **neither works with Self-hosted Live Sync.** See `references/couchdb-livesync-config.md` for the required `local.ini` (single-node mode, CORS origins/credentials/methods, auth settings) and verification commands.
+
 ### Compose Service
 
 ```yaml
@@ -201,21 +208,121 @@ curl -sk -u admin https://db.oathless.dev/_all_dbs
 # Check single-node mode (required for Obsidian Live Sync)
 curl -sk -u admin https://db.oathless.dev/_membership
 
-# Check CORS status (Live Sync needs it enabled)
-curl -sk -u admin https://db.oathless.dev/_node/_local/_config/httpd/enable_cors
+# Check CORS status (Live Sync needs it enabled — note: chttpd, not httpd)
+curl -sk -u admin https://db.oathless.dev/_node/_local/_config/chttpd/enable_cors
+
+# Check CORS origins
+curl -sk -u admin https://db.oathless.dev/_node/_local/_config/cors/origins
+
+# Single-node mode check (correct output: "all_nodes":["nonode@nohost"])
+curl -sk -u admin https://db.oathless.dev/_membership
 ```
+
+**⚠️ PITFALL: CORS config path.** The config section is `[chttpd]` not `[httpd]`. Using `httpd` returns `"unknown_config_value"`. The correct path is `_node/_local/_config/chttpd/enable_cors`.
 
 ### Obsidian Live Sync Setup
 
 Once CouchDB is healthy:
-1. Install the "Self-hosted Live Sync" community plugin in Obsidian
-2. Configure: URI `https://db.oathless.dev`, username `admin`, password from .env
-3. The plugin auto-creates its databases on first sync
+1. Install the **"Self-hosted Live Sync"** community plugin in Obsidian
+2. Use **manual configuration**, not the Setup URI wizard (the wizard rejects plain URLs):
+   - **URI:** `https://db.oathless.dev`
+   - **Username:** `admin`
+   - **Password:** COUCHDB_PASSWORD from `.env`
+   - **Database Name:** leave blank (auto-created)
+   - **Use Internal API:** OFF (going through reverse proxy)
+3. Hit **"Check"** — should confirm
+4. Enable **End-to-End Encryption** with a strong passphrase — same on all devices
+5. Enable **Obfuscate properties** — extra privacy
+
+**⚠️ First-run warnings are normal.** "Could not fetch configuration from remote" and "Failed to get preferred tweak values" are expected on a fresh database. Check CouchDB logs (`docker compose logs couchdb --tail 20`) to confirm — if requests return 200/201, proceed to sync.
+
+See `references/couchdb-livesync-config.md` for the full config file, per-setting rationale, and verification commands.
 
 ### Verifying Sync Is Working
 
 - After setup, `_all_dbs` should show one or more databases (not empty `[]`)
 - Databases look like `vault_name` or `vault_name_couchdb_sync_metadata`
+
+## ZenNotes — Web-Based Markdown Notes
+
+Browser-based notes app that stores everything as plain `.md` files on the host. Ideal when you want the agent (Hermes) to read/write notes directly — no sync plugins, no E2E encryption, no Obsidian dependency on the server. ZenNotes runs as a single Docker container behind the Caddy reverse proxy.
+
+### Compose Service
+
+```yaml
+zennotes:
+  image: adibhanna/zennotes:latest
+  container_name: zennotes
+  restart: unless-stopped
+  user: "1000:1000"           # must match host uid/gid for vault writes
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  volumes:
+    - /home/ruben/obsidian-vault:/workspace
+    - ./zennotes-data:/data
+  environment:
+    - ZENNOTES_AUTH_TOKEN=<openssl rand -hex 32>
+    - ZENNOTES_BEHIND_TLS=1
+  networks:
+    - homeserver
+```
+
+### Caddy Reverse Proxy
+
+```
+notes.oathless.dev {
+    reverse_proxy zennotes:7878
+}
+```
+
+### Token Generation
+
+```bash
+openssl rand -hex 32
+```
+
+The container **refuses to start** without an auth token when binding to a non-loopback address. Write the 64-char hex token to the compose file or an env var.
+
+**⚠️ PITFALL: `ZENNOTES_AUTH_TOKEN_FILE` may not work.** The `_FILE` variant reads from a path inside the container. If the mounted file has restrictive host permissions (e.g. `600`), the container user can't read it. Use `ZENNOTES_AUTH_TOKEN` env var directly instead — simpler and avoids permission issues.
+
+**⚠️ PITFALL: `user: "1000:1000"` is required.** Without it, the container runs as root and the vault directory (`/workspace`) is owned by the host user (uid 1000). The container can't create directories like `inbox/` and crashes with `mkdir /workspace/inbox: permission denied`.
+
+### Why `read_only: true` + `tmpfs: /tmp`
+
+The container filesystem is read-only except for `/tmp` (in-memory) and the two mounted volumes. This plus `cap_drop: ALL` and `no-new-privileges` hardens the container — even if the webapp is compromised, the attacker can't write to the container image or escape.
+
+### First Access
+
+1. Open `https://notes.oathless.dev` in a browser
+2. Paste the auth token on the prompt
+3. The vault at `/workspace` (host: `/home/ruben/obsidian-vault`) is mounted automatically
+
+### Hermes Access
+
+Hermes reads/writes `/home/ruben/obsidian-vault/` directly — no API, no auth, just markdown files. Changes appear instantly in the web UI on refresh.
+
+### Adding Notes to the Vault
+
+**⚠️ PITFALL: Don't assume the vault is remote-only.** When the user asks to add notes to their Obsidian vault, the vault is at `/home/ruben/obsidian-vault/` on this machine (ZenNotes runs in Docker, mounted to that path). Search for it first — don't suggest SCP or create temp directories elsewhere.
+
+**⚠️ PITFALL: Searching for `.obsidian` won't find this vault.** ZenNotes uses `.zennotes/` as its marker directory, not `.obsidian/`. When looking for the vault, search broadly for `find /home/ruben -name ".zennotes"` or look for vault-like structures (`inbox/`, `quick/`, `archive/`, `trash/`). A `find -name ".obsidian"` will return nothing even though the vault exists.
+
+**Workflow:**
+1. **Check structure first** — look for `inbox/Welcome.md` or similar index notes to understand the vault's organization
+2. **New notes go in `inbox/`** — that's where the user's inbox/daily notes live
+3. **Vault structure** is plain directories: `inbox/`, `quick/`, `archive/`, `trash/`
+4. **Write directly** with `write_file` to `/home/ruben/obsidian-vault/inbox/Note Name.md`
+
+**Key files:**
+- Vault root: `/home/ruben/obsidian-vault/`
+- ZenNotes meta: `/home/ruben/obsidian-vault/.zennotes/`
+
+See `references/zennotes-setup.md` for the full working config with per-setting rationale and verification steps.
 
 ## Service Removal
 
@@ -390,6 +497,9 @@ See `references/uptime-kuma-monitors.md` for the full workflow: DB schema, inser
 
 ## References
 
+- `references/couchdb-livesync-config.md` — required CouchDB config (single-node + CORS) for Obsidian Live Sync
+- `references/zennotes-setup.md` — working ZenNotes Docker config with pitfalls and verification
+- `references/zennotes-internals.md` — codebase architecture, tech stack, data model, wikilink system, and graph-feature feasibility assessment
 - `references/uptime-kuma-monitors.md` — programmatic monitor creation, DB schema, pitfall guide
-- `references/compose-profiles-example.yaml` — full Tailscale compose snippet (with and without profiles)
+- `references/github-integration.md` — fine-grained PAT scoping, `gh` CLI auth, org isolation
 - `templates/push-uptime-kuma.sh` — starter script for Uptime Kuma push monitors via Hermes cron

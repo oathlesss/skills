@@ -1,0 +1,27 @@
+# Arachne Prompt Templates Reference
+
+This file mirrors the canonical prompt templates at:
+`/home/ruben/project-arachne/tools/prompts/arachne_prompts.txt`
+
+Load the canonical file for the current version — this reference documents
+the template structure and evolution plan.
+
+## Template Structure
+
+Each template block has:
+- **NAME:** Asset type identifier (CHARACTER_CONCEPT, WEAPON, etc.)
+- **BRACKETED PARAMETERS:** Variables to fill per generation
+- **Fixed qualifiers:** Style constraints that never change
+
+## Evolution Plan (from research doc Section 10.1)
+
+Current: Flat `.txt` file with bracketed variables.
+Target: YAML + Jinja2 in `prompts/{art,code,design,meta}/` directory tree.
+
+## Logging Convention
+
+Every accepted generated image must be logged to:
+`/home/ruben/project-arachne/tools/templates/asset_provenance.csv`
+
+Columns: timestamp, asset_type, prompt_variant, archetype, color_scheme,
+seed, model, human_decision (accepted/rejected/needs_iteration)
