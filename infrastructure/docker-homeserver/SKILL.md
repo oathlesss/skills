@@ -1,8 +1,12 @@
 ---
 name: docker-homeserver
-description: Patterns for Docker Compose homeserver services — VPN tunnels, reverse proxies, CouchDB, ZenNotes, health checks, credential safety, and auth key handling.
+description: Patterns for Docker Compose homeserver services — VPN tunnels, reverse proxies, service dashboards, Git hosting, log viewing, stack management, CouchDB, ZenNotes, health checks, credential safety, and auth key handling.
 triggers:
   - Adding or checking any service in an existing docker-compose.yml
+  - Setting up or configuring Homepage (gethomepage.dev), Forgejo, Dockge, or Dozzle
+  - Adding Caddy `basic_auth` password protection behind the reverse proxy
+  - Configuring Docker Compose dashboard/services/bookmarks/widgets YAML
+  - Resolving Docker volume permission issues (root-owned directories, no sudo)
   - Setting up Tailscale, Cloudflare Tunnel, or WireGuard in Docker
   - Handling one-time auth keys in .env files with Docker Compose
   - Remote access / VPN for a Docker homeserver
@@ -325,6 +329,77 @@ Hermes reads/writes `/home/ruben/obsidian-vault/` directly — no API, no auth, 
 
 See `references/zennotes-setup.md` for the full working config with per-setting rationale and verification steps.
 
+## Adding a New Service
+
+Follow this sequence when adding a service to the stack:
+
+1. **Add the service block** to `docker-compose.yml` (network: `homeserver`, no host port mappings — route everything through Caddy)
+2. **Add a Caddy reverse proxy entry** in `caddy/Caddyfile` (choose a subdomain of `oathless.dev`)
+3. **Pull and start:** `docker compose pull <service> && docker compose up -d <service>`
+4. **Restart Caddy** (`docker compose restart caddy`) — the bind mount can cache, reload isn't reliable. Verify with `docker compose exec caddy cat /etc/caddy/Caddyfile`
+5. **Add Uptime Kuma monitor** — insert directly into SQLite (see `references/uptime-kuma-monitors.md`), then restart Uptime Kuma
+6. **Verify** with `curl -sk https://<domain>/`
+
+See `references/service-catalog.md` for deployed service configs and gotchas.
+
+### ⚠️ Homepage host validation pitfall
+
+Homepage (gethomepage.dev) rejects requests from unknown Host headers by default. When proxied through Caddy on a custom domain, it sees `home.oathless.dev` instead of `localhost` and returns "Host validation failed." Set the env var:
+
+```yaml
+homepage:
+  environment:
+    - HOMEPAGE_ALLOWED_HOSTS=home.oathless.dev
+```
+
+Without this, the container starts healthy but all proxied requests return the host validation error. The container logs show the exact hint.
+
+### ⚠️ Dockge mount path pitfall
+
+Dockge requires compose files at `/opt/stacks/<stack-name>/docker-compose.yml`. Mounting the project root directly at `/opt/stacks` (without a subdirectory) causes "This stack is not managed by Dockge." The fix is a bind mount that includes the stack name:
+
+```yaml
+# WRONG:
+- .:/opt/stacks:ro
+
+# RIGHT:
+- .:/opt/stacks/homeserver:ro
+```
+
+The bind mount target path IS the stack name. The read-only flag (`:ro`) prevents Dockge from editing files in-place but still allows start/stop/restart operations.
+
+## New Service Checklist
+
+When adding a service to the homelab, always do all three:
+
+1. **Docker Compose** — add the service block
+2. **Caddy reverse proxy** — add a subdomain entry
+3. **Uptime Kuma monitor** — insert via SQLite + restart. The user expects this without being asked.
+
+**Monitor insertion pattern (HTTP):**
+```bash
+docker compose exec -T uptime-kuma sqlite3 /app/data/kuma.db "INSERT INTO monitor (name, active, user_id, interval, url, type, weight, created_date, maxretries, ignore_tls, upside_down, maxredirects, accepted_statuscodes_json, retry_interval, method, timeout) VALUES ('Service Name', 1, 1, 60, 'https://sub.oathless.dev', 'http', 2000, datetime('now'), 3, 0, 0, 10, '[\"200\"]', 60, 'GET', 48);"
+docker compose restart uptime-kuma
+```
+
+## Caddy basic_auth (for services without built-in auth)
+
+Use `basic_auth` (not deprecated `basicauth`). The bcrypt hash goes unquoted — `$` in bcrypt hashes is NOT a Caddyfile placeholder and should NOT be wrapped in quotes.
+
+```caddy
+sub.oathless.dev {
+    basic_auth {
+        username $2a$14$abc...
+    }
+    reverse_proxy container:port
+}
+```
+
+**Generating the hash:**
+```bash
+docker compose exec caddy caddy hash-password --plaintext "your-password-here"
+```
+
 ## Service Removal
 
 When removing a service from the stack, follow this sequence:
@@ -361,13 +436,60 @@ When removing a service from the stack, follow this sequence:
 docker compose restart caddy
 ```
 
+**If `restart` doesn't refresh the mount** (container still shows stale Caddyfile content), force a full kill + recreate:
+
+```bash
+docker kill caddy
+docker compose up -d caddy
+```
+
 Then verify the container sees the new content:
 
 ```bash
-docker compose exec caddy tail -5 /etc/caddy/Caddyfile
+docker exec caddy grep "reverse_proxy" /etc/caddy/Caddyfile
 ```
 
-Do NOT rely on `caddy reload` alone after file patches — always verify the container's view matches the host file with a `diff` or direct read.
+Compare against the host file with `grep "reverse_proxy" /home/ruben/homeserver/caddy/Caddyfile`. If they still differ after a kill+recreate, the bind mount itself has an issue (unlikely — check the compose volume config). Do NOT rely on `caddy reload` alone after file patches — always verify the container's view matches the host file.
+
+## Caddy: Password Protection with `basic_auth`
+
+To password-protect a service behind Caddy (e.g. dashboard, log viewer), use `basic_auth` with a bcrypt password hash.
+
+**⚠️ PITFALL: Use `basic_auth`, NOT `basicauth`.** The old `basicauth` directive is **deprecated** in Caddy v2 and expects a different (base64-encoded) password format. Using it with a bcrypt hash produces `base64-decoding password: illegal base64 data at input byte 0` and causes a crash-loop. Always use `basic_auth`, which natively accepts bcrypt hashes.
+
+**⚠️ PITFALL: Do NOT single-quote bcrypt hashes in `basic_auth`.** bcrypt hashes (`$2a$14$...`) work correctly UNQUOTED inside `basic_auth` blocks. Single-quoting them makes Caddy treat the `'` characters as literal parts of the hash, which breaks authentication (Caddy returns `Basic authentication problem, ignoring.` even with correct credentials). Unlike `.env` files or shell, the Caddyfile does NOT interpret `$2a` as a variable reference inside `basic_auth` blocks.
+
+```caddyfile
+# WRONG — deprecated directive, wrong hash format:
+home.oathless.dev {
+    basicauth {
+        user $2a$14$HASH...
+    }
+}
+
+# WRONG — single quotes become part of the hash:
+home.oathless.dev {
+    basic_auth {
+        user '$2a$14$HASH...'
+    }
+}
+
+# RIGHT — basic_auth + unquoted bcrypt hash:
+home.oathless.dev {
+    basic_auth {
+        user $2a$14$HASH...
+    }
+    reverse_proxy service:3000
+}
+```
+
+**Generating the hash:**
+
+```bash
+docker compose exec caddy caddy hash-password --plaintext "your-password"
+```
+
+Copy the output directly (no quotes) into the `basic_auth` block. After editing, `docker compose restart caddy` (not reload — see bind mount caching above).
 
 ## Host Tool Installation (No Sudo)
 
@@ -386,6 +508,18 @@ cp /tmp/tool_*/bin/tool ~/.local/bin/tool
 ```
 
 This avoids apt repository setup (which requires sudo for keyring + sources.list) and keeps the host filesystem clean. Works for `gh`, `uv`, `just`, `watchexec`, and most Go/Rust CLI tools that ship static binaries.
+
+## Root-Owned Docker Directories (No-Sudo Workaround)
+
+**⚠️ PITFALL: Docker creates data directories as root** (container UID 0), so `mkdir`, `chown`, and `ln` from the host user fail with permission denied. The `terminal` tool can't use `sudo` (it requires an interactive TTY).
+
+**Fix:** Use a temporary Alpine container to run filesystem operations as root:
+
+```bash
+docker run --rm -v /home/ruben/homeserver:/host alpine:latest sh -c "mkdir -p /host/dockge/stacks && chown -R 1000:1000 /host/dockge/stacks"
+```
+
+The container runs as root inside, sees the host path via bind mount, and exits cleanly. No `sudo`, no TTY prompt. Also works for `rm -rf` of root-owned data directories when removing services.
 
 ## GitHub Integration (Fine-Grained PAT + `gh` CLI)
 
@@ -505,6 +639,147 @@ See `references/uptime-kuma-monitors.md` for the full workflow: DB schema, inser
 3. **Check for the specific form factor** — Micro/SFF/Tower variants of the same model have different internal layouts. The DMI `product_name` may not include the form factor (e.g. just "OptiPlex 3070"), so check the motherboard P/N against known references
 4. **If direct web research is bot-blocked** (Dell, Reddit, eBay, Google all block curl-based requests), use `delegate_task` with `web` + `browser` toolsets — the subagent's user-agent handling can bypass the CDN bot detection that blocks direct curl/search approaches — see `references/optiplex-3070-micro-hardware.md` for the confirmed specs on this machine
 
+## Crafty Controller — Minecraft Server Panel
+
+Crafty Controller is a web-based panel for managing one or more Minecraft servers — start/stop/restart, console with history, file browser, scheduled tasks, backups, and player management. It replaces the standalone itzg/minecraft-server image when you want a web UI and/or multiple servers.
+
+### Compose Service
+
+```yaml
+crafty:
+  image: registry.gitlab.com/crafty-controller/crafty-4:latest
+  container_name: crafty
+  restart: unless-stopped
+  ports:
+    - "25565:25565"     # Game server 1
+    - "25566:25566"     # Game server 2
+  volumes:
+    - ./crafty/backups:/crafty/backups
+    - ./crafty/servers:/crafty/servers
+    - ./crafty/config:/crafty/app/config
+    - ./crafty/logs:/crafty/logs
+    - ./crafty/import:/crafty/import
+  environment:
+    - TZ=Europe/Amsterdam
+  networks:
+    - homeserver
+
+  # socat sidecar: bridges HTTP (for Caddy) → HTTPS (Crafty's native protocol)
+  crafty-http:
+    image: alpine/socat:latest
+    container_name: crafty-http
+    restart: unless-stopped
+    command: TCP-LISTEN:8000,fork,reuseaddr OPENSSL:crafty:8443,verify=0
+    networks:
+      - homeserver
+```
+
+**⚠️ PITFALL: Crafty 4 only serves HTTPS (8443) — does not support plain HTTP.** Crafty 4 uses HTTPS internally on port 8443 with a self-signed certificate. Setting `http_port` in `config.json` has no effect — Crafty ignores it and continues listening only on HTTPS. Do NOT map port 8000 on the Crafty container — the web UI won't be there.
+
+**⚠️ PITFALL: Caddy v2 cannot reliably reverse-proxy to an HTTPS upstream with a self-signed cert.** Multiple syntax attempts fail:
+- `reverse_proxy https://crafty:8443` — strips the scheme, connects as plain HTTP (connection reset)
+- `reverse_proxy https://crafty:8443 { transport http { tls_insecure_skip_verify } }` — transport block silently ignored
+- `reverse_proxy { to crafty:8443; transport http { tls; tls_insecure_skip_verify } }` — transport block still ignored; adapted config shows plain `dial: crafty:8443`
+
+**Solution: socat sidecar.** Add an `alpine/socat` container that accepts plain HTTP on port 8000 and forwards to Crafty's HTTPS 8443 (with `verify=0` for the self-signed cert). Caddy proxies to the socat sidecar via plain HTTP — no TLS config needed.
+
+### Caddy Reverse Proxy
+
+```caddy
+mc.oathless.dev {
+    basic_auth {
+        oathless $2a$14$...  # reuse existing bcrypt hash, no quotes
+    }
+    reverse_proxy crafty-http:8000   # socat sidecar, NOT crafty directly
+}
+```
+
+The chain: `Browser → HTTPS → Caddy (auth) → HTTP → crafty-http:8000 (socat) → HTTPS → crafty:8443`
+
+The admin panel lives at `https://mc.oathless.dev`. Players connect to the game servers on different ports: `mc.oathless.dev:25565`, `modded.oathless.dev:25566`.
+
+### Fresh Install — Credentials
+
+On first boot, Crafty generates an admin password and writes it to `/crafty/app/config/default-creds.txt` inside the container. Read it from the host:
+
+```bash
+cat ./crafty/config/default-creds.txt
+```
+
+**⚠️ PITFALL: Change the password after first login.** The generated password is complex but exposed in a plaintext file. Go to Settings → Security → Change Password in the Crafty web UI.
+
+**⚠️ PITFALL: Web UI password change may fail with auto-generated passwords.** Crafty's auto-generated default password contains special characters (`%`, `$`, `*`, `@`) that can cause the web UI password change to fail with "An error occurred while authenticating the user." The login works fine but the password-change form rejects it. Fix: reset via the SQLite database.
+
+```bash
+# 1. Generate a new Argon2 hash using Crafty's own venv
+docker exec crafty bash -c "source /crafty/.venv/bin/activate && python3 -c \"
+from argon2 import PasswordHasher
+print(PasswordHasher().hash('NewPasswordHere'))
+\""
+
+# 2. Update the database and default-creds.txt
+python3 -c "
+import sqlite3
+db = sqlite3.connect('./crafty/config/db/crafty.sqlite')
+db.execute('UPDATE users SET password = ? WHERE username = ?', ('ARGON2_HASH_HERE', 'admin'))
+db.commit()
+db.close()
+"
+
+# 3. Also update the plaintext reference file
+# (write new default-creds.txt with the new password)
+```
+
+After the DB reset, log out and log in with the new password. The web UI password change should work normally with simpler passwords.
+
+### Importing an Existing Server
+
+When migrating from itzg/minecraft-server to Crafty:
+
+1. Stop the old Minecraft container
+2. Copy world, mods, config, and server.properties into a subdirectory under `./crafty/import/`:
+   ```bash
+   mkdir -p crafty/import/myserver
+   cp -r minecraft/data/world crafty/import/myserver/
+   cp -r minecraft/mods crafty/import/myserver/
+   cp -r minecraft/config crafty/import/myserver/
+   cp minecraft/data/server.properties crafty/import/myserver/
+   cp minecraft/data/eula.txt crafty/import/myserver/
+   ```
+3. **Each server import must be in its own subdirectory** — flat files at `/crafty/import/` won't be recognized by the import wizard
+4. Start Crafty, then in the web UI: Create Server → choose Import → select the subdirectory
+5. Set the correct server type (Forge/vanilla/Paper), version, memory, and port
+6. Crafty merges the imported files with its own server structure
+
+### Multiple Servers — Port Architecture
+
+Each Minecraft server needs its own port. Standard approach:
+
+| Server | Port | Players connect to |
+|---|---|---|
+| Vanilla | 25565 | `mc.oathless.dev:25565` |
+| Modded | 25566 | `modded.oathless.dev:25566` |
+
+Both domains resolve to the same IP. Players specify the port in their Minecraft client. No SRV records or layer-4 proxying needed.
+
+### API
+
+Crafty 4 has a REST API at `/api/v2/`. On fresh installs, the API may reject requests until the web setup wizard completes. The web UI (`https://mc.oathless.dev`) is the reliable path for initial server creation. Authenticated API calls use `Bearer <token>` from `POST /api/v2/auth/login`.
+
+### Migration Cleanup
+
+After confirming both servers work in Crafty:
+
+```bash
+# Remove the itzg container (already stopped)
+docker rm minecraft
+
+# Keep data as backup until verified, then optionally:
+# rm -rf ./minecraft/
+```
+
+See `references/crafty-controller.md` for the full migration recipe, API exploration notes, and troubleshooting.
+
 ## Minecraft Server — itzg/minecraft-server
 
 The stack uses `itzg/minecraft-server:latest` for the Minecraft service. This image supports vanilla, mod loaders (Forge, Neoforge, Fabric), and modpack platforms (CurseForge, Modrinth, FTB, Packwiz) via the `TYPE` or `MODPACK_PLATFORM` env var.
@@ -573,7 +848,92 @@ CF_API_KEY='***'   # single quotes prevent $ expansion
 | `CF_OVERRIDES_EXCLUSIONS` | Ant-style paths to exclude from overrides extraction |
 | `CF_PARALLEL_DOWNLOADS` | Parallel mod downloads (default: 4) |
 
-See `references/minecraft-curseforge-modpacks.md` for the full extraction from itzg docs, including pinning versions, excluding client-side mods, Fabric/Forge mod detection, Forge 1.20.1 handshake strictness, stress-testing with RCON and forceload, and handling world data.
+See `references/linux-hardware-inspection.md` for the full workflow.
+
+## Homepage (gethomepage.dev)
+
+Service dashboard with YAML config and Docker auto-discovery.
+
+```yaml
+homepage:
+  image: ghcr.io/gethomepage/homepage:latest
+  container_name: homepage
+  restart: unless-stopped
+  environment:
+    - HOMEPAGE_ALLOWED_HOSTS=home.oathless.dev   # required when behind reverse proxy
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - ./homepage:/app/config
+  networks:
+    - homeserver
+```
+
+**⚠️ PITFALL: `HOMEPAGE_ALLOWED_HOSTS` is required.** Without it, Homepage rejects requests from the reverse proxy domain with "Host validation failed."
+
+**⚠️ PITFALL: Config files are root-owned.** The container creates `./homepage/` with root ownership. Chown before writing configs:
+
+```bash
+docker run --rm -v /home/ruben/homeserver/homepage:/data alpine:latest chown -R 1000:1000 /data
+```
+
+**Config files** live in `./homepage/`:
+- `settings.yaml` — title, theme, layout
+- `services.yaml` — service links grouped by category (groups are supported here)
+- `widgets.yaml` — system resources, docker stats, search
+- `bookmarks.yaml` — quick links
+- `docker.yaml` — socket-based auto-discovery
+
+Restart after config changes: `docker compose restart homepage`
+
+**⚠️ PITFALL: Widgets use a flat YAML list, not grouped sections.** Unlike `services.yaml` (which supports groups like `- Infrastructure:` → `- Caddy:`), `widgets.yaml` is a flat list of widget objects. Grouping widgets under named sections produces "Missing" errors for every widget in the group.
+
+```yaml
+# WRONG — groups cause "Missing" errors:
+widgets.yaml: |
+  - Resources:
+      - System:
+          widget: resources
+  - Search:
+      - Search:
+          widget: search
+
+# RIGHT — flat list, no groups:
+widgets.yaml: |
+  - resources:
+      cpu: true
+      memory: true
+      expanded: true
+      disk: /
+  - search:
+      provider: duckduckgo
+      target: _blank
+```
+
+**⚠️ PITFALL: No standalone `docker` widget.** The docker widget type only works through the `docker.yaml` provider (auto-discovery), not as a standalone widget in `widgets.yaml`. Adding `- docker:` in widgets.yaml produces "Missing." Use `docker.yaml` with the socket path instead.
+
+**⚠️ PITFALL: Dashboard icons are CDN-fetched, not all names exist.** Homepage fetches icons from `cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/` at runtime. Most common service names work (`caddy.png`, `forgejo.png`, `dockge.png`, `dozzle.png`, `uptime-kuma.png`, `minecraft.png`, `tailscale.png`). Custom/generic names like `notes.png` do NOT exist and show a broken image. Fallbacks:
+- **Material Design Icons:** Use `icon: mdi-notebook-edit-outline` (or any valid MDI name). Always available, no CDN dependency.
+- **Simple Icons:** Use `icon: si-github` for brand icons.
+- **Abbreviations:** Use `abbr: NT` for a text badge instead of an icon.
+
+## Dockge
+
+Stack manager that expects compose files at `/opt/stacks/<name>/docker-compose.yml`.
+
+```yaml
+dockge:
+  image: louislam/dockge:1
+  container_name: dockge
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - ./dockge/data:/app/data
+    - .:/opt/stacks/homeserver:ro    # mounts directly as a stack directory
+  networks:
+    - homeserver
+```
+
+**⚠️ PITFALL:** Dockge expects subdirectories under `/opt/stacks/`. Mounting `.:/opt/stacks:ro` results in "This stack is not managed by Dockge." Mount the project root directly into a named subdirectory like `/opt/stacks/homeserver`.
 
 ## References
 
@@ -582,7 +942,12 @@ See `references/minecraft-curseforge-modpacks.md` for the full extraction from i
 - `references/zennotes-internals.md` — codebase architecture, tech stack, data model, wikilink system, and graph-feature feasibility assessment
 - `references/uptime-kuma-monitors.md` — programmatic monitor creation, DB schema, pitfall guide
 - `references/github-integration.md` — fine-grained PAT scoping, `gh` CLI auth, org isolation
+- `references/service-catalog.md` — deployed service configs, Caddy blocks, and gotchas (Homepage, Forgejo, Dockge, Dozzle, etc.)
+- `references/homepage-config-ruben.md` — working Homepage YAML configs for Ruben's homelab (services, widgets, bookmarks, icons verified)
 - `templates/push-uptime-kuma.sh` — starter script for Uptime Kuma push monitors via Hermes cron
+- `references/crafty-controller.md` — Crafty Controller setup, migration from itzg, API notes, pitfalls
 - `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
 - `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)
+- `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers
+- `references/homepage-forgejo-dockge-dozzle.md` — Homepage, Forgejo, Dockge, and Dozzle: Compose snippets, Caddy entries, ports, resource usage, and verification
 - `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers
