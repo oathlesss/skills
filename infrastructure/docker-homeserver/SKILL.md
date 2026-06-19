@@ -17,6 +17,7 @@ triggers:
   - Setting up or modifying Uptime Kuma monitors, status pages, or notifications
   - Uptime Kuma API exploration, database inspection, or programmatic monitor creation
   - Hardware inspection, storage capacity analysis, or upgrade planning for the homeserver machine
+  - Managing Docker Compose secrets — encrypting .env files, SOPS + age, per-service isolation, migrating from monolithic .env
 ---
 
 # Docker Homeserver Patterns
@@ -138,6 +139,80 @@ After the container starts successfully, **remove the auth key from .env immedia
 ```bash
 grep -v 'TAILSCALE_AUTHKEY' .env > /tmp/env_cleaned && mv /tmp/env_cleaned .env
 ```
+
+## SOPS + Age: Encrypted Secrets at Rest
+
+For managing ALL Docker Compose secrets with encryption at rest, per-service isolation, and git-safety — the pragmatic sweet spot for single-machine homelabs. See `references/sops-age-secrets.md` for the full recipe with step-by-step setup, day-to-day operations, pitfalls, and comparison matrix.
+
+### Architecture
+
+```
+homeserver/
+├── .sops.yaml              # SOPS encryption config (age public key)
+├── .env.example            # Documents required secrets (committable)
+├── .gitignore              # Blocks plaintext, allows *.sops files
+├── deploy.sh               # Decrypt → deploy → cleanup in one command
+├── docker-compose.yml      # Uses per-service env_file: (no ${VAR} substitution)
+└── secrets/
+    ├── mc.env.sops         # MC_RCON_PASSWORD → minecraft-vanilla, minecraft-modded
+    ├── zennotes.env.sops   # ZENNOTES_AUTH_TOKEN → zennotes
+    └── tailscale.env.sops  # TAILSCALE_AUTHKEY → tailscale
+```
+
+### Core Workflow
+
+```bash
+# Install (no sudo)
+curl -sL "https://github.com/getsops/sops/releases/download/v3.13.1/sops-v3.13.1.linux.amd64" -o ~/.local/bin/sops
+chmod +x ~/.local/bin/sops
+age-keygen -o ~/.config/sops/age/keys.txt
+
+# Encrypt
+sops --input-type dotenv --output-type dotenv --encrypt secrets/mc.env > secrets/mc.env.sops
+
+# Deploy
+./deploy.sh              # decrypt → docker compose up → cleanup
+```
+
+### ⚠️ CRITICAL: SOPS input type
+
+SOPS defaults to JSON/YAML parsing. For `.env` files, **always** use `--input-type dotenv --output-type dotenv`. Without it, decryption fails with "invalid character looking for beginning of value." This applies to both `sops --encrypt` and `sops --decrypt`.
+
+### ⚠️ docker compose config leaks secrets
+
+Running `docker compose config` with decrypted env files present prints all resolved secrets to stdout. Always clean up plaintext files before validation, or use a temporary directory.
+
+### Per-Service Isolation in docker-compose.yml
+
+Replace monolithic `${VAR}` substitution with per-service `env_file:`:
+
+```yaml
+services:
+  minecraft-vanilla:
+    env_file:
+      - ./secrets/mc.env
+    environment:
+      RCON_PASSWORD: ${MC_RCON_PASSWORD}  # from env_file
+      # ... non-secret config stays in environment block
+```
+
+Each container only sees the env files listed in its `env_file:` block. No shared `.env` needed at all.
+
+### Age Key Backup
+
+The private key in `~/.config/sops/age/keys.txt` is the **only** way to decrypt secrets. Back it up immediately after generation:
+
+```bash
+cat ~/.config/sops/age/keys.txt
+# Copy the entire output to a password manager or secure location
+```
+
+Lost key = permanently inaccessible secrets. No recovery path.
+
+### Templates
+
+- `templates/deploy-sops.sh` — ready-to-use deploy wrapper (decrypt → compose up → cleanup)
+- `templates/sops-config.yaml` — starter `.sops.yaml` (replace public key placeholder)
 
 ## No Router Changes Needed
 
@@ -378,13 +453,13 @@ When adding a service to the homelab, always do all three:
 
 **Monitor insertion pattern (HTTP):**
 ```bash
-docker compose exec -T uptime-kuma sqlite3 /app/data/kuma.db "INSERT INTO monitor (name, active, user_id, interval, url, type, weight, created_date, maxretries, ignore_tls, upside_down, maxredirects, accepted_statuscodes_json, retry_interval, method, timeout) VALUES ('Service Name', 1, 1, 60, 'https://sub.oathless.dev', 'http', 2000, datetime('now'), 3, 0, 0, 10, '[\"200\"]', 60, 'GET', 48);"
+**Monitor insertion pattern (HTTP, via docker exec):** Use `docker exec uptime-kuma sqlite3` to write monitors — the host DB is root-owned and locked by the running process, so `python3 -c "import sqlite3; ..."` from the host fails with `OperationalError: attempt to write a readonly database`. Writing inside the container works reliably:\n\n```bash\n# HTTP monitor (public-facing URL check)\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"INSERT INTO monitor (name, active, user_id, interval, url, type, weight, created_date, maxretries, ignore_tls, upside_down, maxredirects, accepted_statuscodes_json, retry_interval, method, timeout, description) VALUES ('Service Name', 1, 1, 60, 'https://sub.oathless.dev', 'http', 2000, datetime('now'), 3, 0, 0, 10, '[\\\"200\\\"]', 60, 'GET', 48, 'Optional description');\"\n\n# TCP port monitor (internal Docker network check)\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"INSERT INTO monitor (name, active, user_id, interval, type, weight, hostname, port, created_date, maxretries, ignore_tls, upside_down, maxredirects, accepted_statuscodes_json, retry_interval, method, expiry_notification, timeout, gamedig_given_port_only, description) VALUES ('Service TCP', 1, 1, 120, 'port', 2000, 'container-name', 25565, datetime('now'), 3, 0, 0, 10, '[\\\"200-299\\\"]', 120, 'GET', 1, 48.0, 1, 'Optional description');\"\n\n# Update existing monitor\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"UPDATE monitor SET name='New Name', hostname='new-host', port=25567, description='Updated' WHERE id=3;\"\n```\n\n**No restart needed.** Uptime Kuma reads monitors from the DB on each check cycle — inserts and updates take effect immediately. To verify:\n\n```bash\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \"SELECT id, name, hostname, port, active FROM monitor WHERE name LIKE '%search%';\"\n```
 docker compose restart uptime-kuma
 ```
 
 ## Caddy basic_auth (for services without built-in auth)
 
-Use `basic_auth` (not deprecated `basicauth`). The bcrypt hash goes unquoted — `$` in bcrypt hashes is NOT a Caddyfile placeholder and should NOT be wrapped in quotes.
+Use `basic_auth` **only for services that lack their own login**. Do NOT layer Caddy's `basic_auth` on top of services with built-in authentication (Crafty, Forgejo, Dockge, Uptime Kuma) — it creates double-auth friction and causes the `Authorization: Basic` header to leak to the upstream, interfering with the service's own auth (Bearer tokens, session cookies). Reserve `basic_auth` for read-only dashboards and tools that have no auth of their own: Dozzle, Homepage, Netdata, etc. The bcrypt hash goes unquoted — `$` in bcrypt hashes is NOT a Caddyfile placeholder and should NOT be wrapped in quotes.
 
 ```caddy
 sub.oathless.dev {
@@ -641,6 +716,8 @@ See `references/uptime-kuma-monitors.md` for the full workflow: DB schema, inser
 
 ## Crafty Controller — Minecraft Server Panel
 
+> **⚠️ PREFERENCE: Direct itzg containers are preferred over Crafty for this homelab.** Crafty's HTTPS-only server, self-signed cert, and reverse-proxy chain (Caddy → socat sidecar → Crafty HTTPS) create a dependency stack that has proven **unfixable in practice**. Every known fix was applied — `base_url` with `https://` protocol, Host header forwarding, `X-Forwarded-*` headers, removing `basic_auth` to stop the `Authorization` header leak — and CSRF/cookie/session failures (403 on POST, "Invalid token" on every API call) persisted. The socat TCP→SSL tunnel is a fragile architecture that Crafty's Tornado-based CSRF protection cannot work with reliably. The user chose to abandon Crafty in favor of two direct `itzg/minecraft-server` containers. If the user explicitly asks for a panel again, re-evaluate — but the default approach for Minecraft servers on this homelab is direct itzg containers. Do not attempt to resurrect the Crafty + socat setup without the user's explicit request.
+
 Crafty Controller is a web-based panel for managing one or more Minecraft servers — start/stop/restart, console with history, file browser, scheduled tasks, backups, and player management. It replaces the standalone itzg/minecraft-server image when you want a web UI and/or multiple servers.
 
 ### Compose Service
@@ -685,18 +762,39 @@ crafty:
 
 ### Caddy Reverse Proxy
 
+**Default (no double-auth — preferred):** Crafty has its own login, so Caddy's `basic_auth` is unnecessary friction.
+
 ```caddy
 mc.oathless.dev {
-    basic_auth {
-        oathless $2a$14$...  # reuse existing bcrypt hash, no quotes
+    reverse_proxy crafty-http:8000 {
+        header_up Host {http.request.host}          # preserve original domain for cookie/CSRF
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {http.request.host}
     }
-    reverse_proxy crafty-http:8000   # socat sidecar, NOT crafty directly
 }
 ```
 
-The chain: `Browser → HTTPS → Caddy (auth) → HTTP → crafty-http:8000 (socat) → HTTPS → crafty:8443`
+**Optional (Caddy basic_auth + Crafty login):** If you want an extra auth layer, add `basic_auth` and strip the leaked `Authorization` header:
+
+```caddy
+mc.oathless.dev {
+    basic_auth {
+        oathless $2a$14$...  # unquoted bcrypt hash
+    }
+    reverse_proxy crafty-http:8000 {
+        header_up Host {http.request.host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {http.request.host}
+        header_up -Authorization      # strip Caddy's basic_auth so it doesn't leak to Crafty
+    }
+}
+```
+
+The chain: `Browser → HTTPS → Caddy → HTTP → crafty-http:8000 (socat) → HTTPS → crafty:8443`
 
 The admin panel lives at `https://mc.oathless.dev`. Players connect to the game servers on different ports: `mc.oathless.dev:25565`, `modded.oathless.dev:25566`.
+
+**⚠️ PITFALL: Caddy's `basic_auth` leaks the `Authorization` header to upstream services.** When a user authenticates with Caddy's `basic_auth`, Caddy forwards the `Authorization: Basic <base64>` header to the backend. If the backend has its own auth system (like Crafty does), this header conflicts with the backend's Bearer token / session cookie auth. This causes "ACCESS_DENIED" and "An error occurred while authenticating the user" errors for password changes, MFA setup, and other account operations — even though login works fine. Fix: strip the header with `header_up -Authorization` inside the `reverse_proxy` block.
 
 ### Fresh Install — Credentials
 
@@ -709,6 +807,29 @@ cat ./crafty/config/default-creds.txt
 **⚠️ PITFALL: Change the password after first login.** The generated password is complex but exposed in a plaintext file. Go to Settings → Security → Change Password in the Crafty web UI.
 
 **⚠️ PITFALL: Web UI password change may fail with auto-generated passwords.** Crafty's auto-generated default password contains special characters (`%`, `$`, `*`, `@`) that can cause the web UI password change to fail with "An error occurred while authenticating the user." The login works fine but the password-change form rejects it. Fix: reset via the SQLite database.
+
+**⚠️ PITFALL: Crafty `base_url` CSRF rejection.** Crafty's default `config.json` sets `base_url: localhost:8443`. When accessed through a reverse proxy at a different domain (e.g. `mc.oathless.dev`), Crafty's CSRF protection rejects sensitive POST requests — password changes, MFA setup, API key creation — with "ACCESS_DENIED — An error occurred while authenticating the user." Login works, account operations fail. **Fix:** Update `config.json` to set `base_url` to the external domain **including the `https://` protocol** and restart Crafty. Without the protocol prefix, Crafty's CSRF `Origin`/`Referer` comparison silently fails (it expects `https://mc.oathless.dev` but sees `mc.oathless.dev`):
+```bash
+python3 -c "
+import json
+with open('./crafty/config/config.json') as f: config = json.load(f)
+config['base_url'] = 'https://mc.oathless.dev'
+with open('./crafty/config/config.json', 'w') as f: json.dump(config, f, indent=4)
+"
+docker compose restart crafty
+```
+
+**⚠️ PITFALL: Caddy rewrites Host header → cookie/CSRF mismatch.** Caddy's `reverse_proxy` directive rewrites the `Host` header to the upstream address (`crafty-http:8000`) by default. Crafty uses this Host for setting session cookies and CSRF tokens — if it sees `crafty-http:8000` instead of `mc.oathless.dev`, the browser never sends the cookies back because they're set for the wrong domain. **Symptoms:** login succeeds but every subsequent API call returns 403 (CSRF failure) or "Invalid token" (cookie never sent). **Fix:** explicitly forward the original Host header plus `X-Forwarded-*` headers inside the `reverse_proxy` block:
+```caddy
+mc.oathless.dev {
+    reverse_proxy crafty-http:8000 {
+        header_up Host {http.request.host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+    }
+}
+```
 
 ```bash
 # 1. Generate a new Argon2 hash using Crafty's own venv
@@ -812,15 +933,32 @@ rm -f ./minecraft/data/server.properties
 docker compose up -d minecraft
 ```
 
+**⚠️ PITFALL: itzg overwrites existing server.properties by default.** When you bring existing server files (world, mods, configs, server.properties from a prior setup), the itzg image regenerates server.properties from environment variables, overwriting custom settings like level-type, max-tick-time, view-distance, and the RCON password. Fix: set OVERRIDE_SERVER_PROPERTIES: false in the environment. The container will use the existing server.properties as-is. When this is false, ALL env vars that affect server.properties are ignored — including ENABLE_RCON, RCON_PORT, and RCON_PASSWORD. The RCON password will be whatever is already in the existing server.properties. For a fresh server without an existing file, omit this flag (defaults to true) and the env vars control everything.
+
+**⚠️ PITFALL: RCON authentication failure with `OVERRIDE_SERVER_PROPERTIES=false`.** When this flag is false, the container's `RCON_PASSWORD` env var may differ from `rcon.password` in the existing `server.properties`. The `rcon-cli` tool inside the container reads from the env var, but the Minecraft server binds RCON using the value in `server.properties`. Symptom: `rcon: authentication failed` even with `ENABLE_RCON=true`. **Fix — sync the env var password into server.properties from inside the container, then restart:**
+```bash
+docker exec <container> sh -c 'sed -i "s/^rcon.password=.*/rcon.password=$RCON_PASSWORD/" /data/server.properties'
+docker compose restart <service>
+```
+
+**Diagnose mismatch** by comparing byte counts (terminal output may sanitize the password string, so compare lengths instead):
+```bash
+docker exec <container> sh -c 'echo "$RCON_PASSWORD" | wc -c'
+docker exec <container> grep 'rcon.password' /data/server.properties | wc -c
+```
+Different byte counts = mismatch. Forge modded servers take 60-90s to restart; vanilla servers restart in ~10s.
+
 **⚠️ PITFALL: Java version mismatch.** The `itzg/minecraft-server:latest` image runs Java 25, but many modpacks target specific Java versions. Forge 1.20.1 modpacks (like Integrated Minecraft) need **Java 17**. Running on the wrong Java version produces `Unsupported class file major version 69` (Java 25 bytecode vs ASM library that only supports up to Java 21). Fix by pinning the correct image tag:
 
 | Minecraft Version | Image Tag |
 |---|---|
 | 1.20.x (Forge) | `itzg/minecraft-server:java17` |
-| 1.21.x (Neoforge) | `itzg/minecraft-server:java21` |
-| Latest | `itzg/minecraft-server:latest` (Java 25) |
+| 1.21.x | `itzg/minecraft-server:java21` |
+| Latest | `itzg/minecraft-server:latest` or `:java21` |
 
 The major version numbers in the error map as: 61=Java 17, 65=Java 21, 69=Java 25.
+
+**⚠️ PITFALL: `LATEST` resolves to a version requiring the right Java image tag.** As of mid-2026, `VERSION: LATEST` resolves to Minecraft 26.2 which requires Java 25 (class file 69.0). The itzg image provides `java25` tags. Always match the Java image to the Minecraft version:\n\n| Minecraft Version | Java Required | Image Tag |\n|---|---|---|\n| 1.20.x (Forge) | Java 17 | `itzg/minecraft-server:java17` |\n| 1.21.x | Java 21 | `itzg/minecraft-server:java21` |\n| 26.x (latest) | Java 25 | `itzg/minecraft-server:java25` |\n\nClass file version numbers in the error map as: 61=Java 17, 65=Java 21, 69=Java 25. **Fix:** pin the correct image tag. For vanilla/latest always use `:java25` — the `:latest` image tag currently uses Java 21 and cannot run Minecraft 26.2.
 
 **⚠️ PITFALL: `$` in API keys.** CurseForge API keys often contain `$` characters (e.g. `$2a$10$...`). In `.env` files, **always wrap the key in single quotes** — without quotes, Docker Compose interprets `$2a`, `$10` etc. as variable names and substitutes them to empty strings, silently mangling the key. The container receives a truncated value and `mc-image-helper` fails with "Access to https://api.curseforge.com is forbidden." 
 
@@ -836,7 +974,189 @@ CF_API_KEY='***'   # single quotes prevent $ expansion
 
 **Diagnose** with `docker inspect minecraft --format '{{range .Config.Env}}{{println .}}{{end}}' | grep CF_API_KEY` to see what the container actually received.
 
-### Useful AUTO_CURSEFORGE variables
+### Multiple Servers (Two-Container Pattern)
+
+When running two separate Minecraft servers from one compose file (e.g. vanilla + modded), each gets its own container, data directory, and port:
+
+```yaml
+  # Vanilla — fresh world, latest stable version
+  minecraft-vanilla:
+    image: itzg/minecraft-server:java25      # Java 25 for Minecraft 26.x
+    container_name: minecraft-vanilla
+    restart: unless-stopped
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./minecraft-vanilla/data:/data
+    environment:
+      EULA: "TRUE"
+      TYPE: VANILLA
+      VERSION: LATEST
+      MEMORY: 2G
+      ENABLE_RCON: "true"
+      RCON_PORT: 25575
+      RCON_PASSWORD: ${MC_RCON_PASSWORD}
+      TZ: Europe/Amsterdam
+    networks:
+      - homeserver
+
+  # Modded — Forge 1.20.1, existing world + 267 mods
+  minecraft-modded:
+    image: itzg/minecraft-server:java17     # Forge 1.20.1 requires Java 17
+    container_name: minecraft-modded
+    restart: unless-stopped
+    ports:
+      - "25566:25566"
+    volumes:
+      - ./minecraft-modded/data:/data
+    environment:
+      EULA: "TRUE"
+      TYPE: FORGE
+      VERSION: "1.20.1"
+      FORGE_VERSION: "47.4.0"
+      MEMORY: 10G
+      ENABLE_RCON: "true"
+      RCON_PORT: 25576
+      RCON_PASSWORD: ${MC_RCON_PASSWORD}
+      OVERRIDE_SERVER_PROPERTIES: "false"   # preserve existing server.properties
+      TZ: Europe/Amsterdam
+    networks:
+      - homeserver
+```
+
+**Key differences between the two containers:**
+
+| Aspect | Vanilla | Modded |
+|---|---|---|
+| Image | `java25` (latest MC) | `java17` (Forge 1.20.1) |
+| Port | 25565 | 25566 |
+| Memory | 2G | 10G |
+| `OVERRIDE_SERVER_PROPERTIES` | `true` (default, no flag) | `false` (preserve existing) |
+| RCON port | 25575 | 25576 |
+| Data dir | `minecraft-vanilla/data/` | `minecraft-modded/data/` |
+
+**⚠️ PITFALL: Use different image tags per server.** Forge 1.20.1 requires Java 17; vanilla 1.21.4 requires Java 21. Using `:latest` or the wrong tag on the modded server produces class file version errors. Pin the correct tag per server in the compose file.
+
+**⚠️ PITFALL: Don't reuse the same data directory.** Each container needs its own `/data` mount. Sharing causes conflicts — one container's `server.properties`, world, or mods overwrite the other's.
+
+**DNS and connectivity:** Both servers share the same host IP. **Use mc-router** (see below) so players connect to `mc.oathless.dev` or `modded.oathless.dev` on the default port 25565 — no port numbers needed. mc-router reads the Minecraft handshake hostname and routes to the correct backend.
+
+**Uptime Kuma:** Add separate TCP port monitors for each — use Docker service names as hostnames (`minecraft-vanilla`, `minecraft-modded`) since Uptime Kuma runs in the same Docker network.
+
+### mc-router — Domain-Based Minecraft Routing
+
+When running multiple Minecraft servers on a single IP, all domains resolve to the same address and Minecraft clients default to port 25565. Without routing, `modded.oathless.dev` connects to the vanilla server on 25565 — the modded server on 25566 is never reached. mc-router solves this by reading the hostname from the Minecraft handshake packet and proxying to the correct backend.
+
+```yaml
+mc-router:
+  image: itzg/mc-router:latest
+  container_name: mc-router
+  restart: unless-stopped
+  ports:
+    - "25565:25565"              # single entry point for all MC traffic
+  environment:
+    MAPPING: "mc.oathless.dev=minecraft-vanilla:25565,modded.oathless.dev=minecraft-modded:25566"
+  command: --default minecraft-vanilla:25565 --api-binding :25564
+  networks:
+    - homeserver
+```
+
+**Architecture:**
+- mc-router takes over port 25565 (the only Minecraft port exposed to the host)
+- Both Minecraft servers REMOVE their `ports:` sections — they're internal-only
+- mc-router routes by hostname: `mc.oathless.dev` → vanilla, `modded.oathless.dev` → modded
+- Default route (`oathless.dev` or any unmatched hostname) → vanilla
+- API binding on `:25564` avoids port conflict with the Minecraft proxy on 25565
+
+**Migration from direct ports:**
+```bash
+# 1. Stop servers, remove them
+docker compose stop minecraft-vanilla minecraft-modded
+docker compose rm -f minecraft-vanilla minecraft-modded
+
+# 2. Remove `ports:` from both server services in docker-compose.yml
+# 3. Add mc-router service (above)
+
+# 4. Bring everything up
+docker compose up -d mc-router minecraft-vanilla minecraft-modded
+```
+
+**Verification:** Both servers are reachable on port 25565. `ss -tlnp | grep 25565` should show ONLY mc-router listening — 25566 should NOT appear. Players connect to `mc.oathless.dev` or `modded.oathless.dev` with no port number.
+
+### RCON Console Access
+
+The `itzg/minecraft-server` image includes `rcon-cli` built-in — no extra tools needed. With Hermes on the host, you have a Minecraft console without any panel:
+
+```bash
+# Run any server command
+docker exec <container> rcon-cli "say Hello players"
+docker exec <container> rcon-cli "give PlayerName minecraft:diamond 64"
+docker exec <container> rcon-cli "time set day"
+docker exec <container> rcon-cli "list"
+```
+
+Hermes can execute these directly — just ask. No web UI, no Crafty, no `mcrcon` binary. The `rcon-cli` reads `RCON_HOST`, `RCON_PORT`, and `RCON_PASSWORD` from the container environment automatically.
+
+**⚠️ PITFALL: Don't pipe secrets into `rcon-cli` on the command line.** The `rcon-cli` tool uses the env vars set by the container — never pass `-p <password>` as a CLI argument. The password would appear in process listings and shell history. The container already has `RCON_PASSWORD` set, so `docker exec <container> rcon-cli "command"` Just Works without any credential exposure.
+
+### Whitelist Management
+
+Whitelist management has two layers: **live** (RCON, instant, no restart) and **persistent** (docker-compose env vars, survives container recreation).
+
+**Live management via RCON:**
+
+```bash
+# Enable whitelist
+docker exec <container> rcon-cli "whitelist on"
+
+# Add players (comma-separated list, batch-friendly)
+docker exec <container> rcon-cli "whitelist add PlayerName"
+
+# List whitelisted players
+docker exec <container> rcon-cli "whitelist list"
+```
+
+**Persistent env vars in docker-compose.yml:**
+
+```yaml
+environment:
+  WHITELIST: "PlayerOne,PlayerTwo,PlayerThree"
+  ENFORCE_WHITELIST: "true"
+```
+
+| Env var | What it does | Depends on |
+|---|---|---|
+| `WHITELIST` | Comma-separated players → writes `whitelist.json` | Always works, independent of `OVERRIDE_SERVER_PROPERTIES` |
+| `ENFORCE_WHITELIST` | Sets `white-list=true` in `server.properties` | Only takes effect when `OVERRIDE_SERVER_PROPERTIES=true` (the default) |
+
+**⚠️ PITFALL: `ENFORCE_WHITELIST` is ignored when `OVERRIDE_SERVER_PROPERTIES=false`.** The env var sets `server.properties`, but the entrypoint skips server.properties entirely when the override flag is false. In that case, use RCON `whitelist on` instead — it writes `white-list=true` to the running server's `server.properties` directly. After confirming with `docker exec <container> grep white-list /data/server.properties`, the setting persists across restarts.
+
+**⚠️ PITFALL: "That player does not exist" means the username isn't a valid Mojang account.** RCON `whitelist add` fails for nonexistent usernames. Verify with the Mojang API before troubleshooting the server:
+
+```bash
+curl -s "https://api.mojang.com/users/profiles/minecraft/<username>"
+# Valid → returns {"id":"...","name":"..."}
+# Invalid → returns {"errorMessage":"Couldn't find any profile with name ..."}
+```
+
+**Recommended workflow for setting up whitelist on existing servers:**
+1. Add `WHITELIST` env var to docker-compose.yml (persistence)
+2. Run RCON `whitelist on` + `whitelist add <each user>` (instant, no restart)
+3. Verify with `whitelist list`
+4. If `OVERRIDE_SERVER_PROPERTIES=false`, the RCON `whitelist on` is the only way to set `white-list=true` — `ENFORCE_WHITELIST` won't work
+
+**Homepage:** List both servers separately on the dashboard with distinct descriptions:
+```yaml
+- Vanilla MC:
+    href: https://oathless.dev
+    description: Minecraft 26.2 • mc.oathless.dev:25565
+    icon: minecraft.png
+
+- Modded MC:
+    href: https://oathless.dev
+    description: Forge 1.20.1 • 267 mods • modded.oathless.dev:25566
+    icon: minecraft.png
+```
 
 | Variable | Purpose |
 |---|---|
@@ -937,6 +1257,7 @@ dockge:
 
 ## References
 
+- `references/sops-age-secrets.md` — full SOPS + age setup recipe: architecture, step-by-step, pitfalls, day-to-day ops, comparison matrix
 - `references/couchdb-livesync-config.md` — required CouchDB config (single-node + CORS) for Obsidian Live Sync
 - `references/zennotes-setup.md` — working ZenNotes Docker config with pitfalls and verification
 - `references/zennotes-internals.md` — codebase architecture, tech stack, data model, wikilink system, and graph-feature feasibility assessment
@@ -945,6 +1266,8 @@ dockge:
 - `references/service-catalog.md` — deployed service configs, Caddy blocks, and gotchas (Homepage, Forgejo, Dockge, Dozzle, etc.)
 - `references/homepage-config-ruben.md` — working Homepage YAML configs for Ruben's homelab (services, widgets, bookmarks, icons verified)
 - `templates/push-uptime-kuma.sh` — starter script for Uptime Kuma push monitors via Hermes cron
+- `templates/deploy-sops.sh` — deploy wrapper: decrypts secrets → runs docker compose → cleans up plaintext
+- `templates/sops-config.yaml` — starter `.sops.yaml` (replace age public key placeholder)
 - `references/crafty-controller.md` — Crafty Controller setup, migration from itzg, API notes, pitfalls
 - `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
 - `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)

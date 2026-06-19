@@ -31,9 +31,13 @@ layout:
         href: https://login.tailscale.com/admin/machines
         description: Mesh VPN — remote access without port forwarding
         icon: tailscale.png
-    - Minecraft:
+    - Vanilla MC:
         href: https://oathless.dev
-        description: Forge 1.20.1 • Integrated MC modpack • :25565
+        description: Minecraft 26.2 • mc.oathless.dev:25565
+        icon: minecraft.png
+    - Modded MC:
+        href: https://oathless.dev
+        description: Forge 1.20.1 • 267 mods • modded.oathless.dev:25566
         icon: minecraft.png
 
 - Services:

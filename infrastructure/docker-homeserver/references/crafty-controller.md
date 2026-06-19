@@ -58,16 +58,34 @@ crafty-http:
 ```
 
 ### Step 4: Add Caddy reverse proxy
+Basic config (Crafty has its own login — no double-auth needed):
+```caddy
+mc.oathless.dev {
+    reverse_proxy crafty-http:8000 {
+        header_up Host {http.request.host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {http.request.host}
+    }
+}
+```
+The Host header forwarding is CRITICAL — without it, cookies and CSRF tokens won't work (see Pitfall #9).
+
+Optional: add Caddy `basic_auth` for an extra layer, but strip the leaked `Authorization` header so it doesn't conflict with Crafty's own auth:
 ```caddy
 mc.oathless.dev {
     basic_auth {
         oathless $2a$14$8S2Ua8ch/xxrO0HWIdME.ebWwizQ5pxIr7aEgCEIkEHGmoRNcgIEi
     }
-    reverse_proxy crafty-http:8000   # socat sidecar, NOT crafty directly
+    reverse_proxy crafty-http:8000 {
+        header_up Host {http.request.host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {http.request.host}
+        header_up -Authorization
+    }
 }
 ```
 
-The proxy chain: `Browser → HTTPS → Caddy (auth) → HTTP → crafty-http:8000 (socat) → HTTPS → crafty:8443`
+The proxy chain: `Browser → HTTPS → Caddy → HTTP → crafty-http:8000 (socat) → HTTPS → crafty:8443`
 
 ### Step 5: Start
 ```bash
@@ -118,6 +136,49 @@ The `/api/v2/servers` POST endpoint returned `INVALID_JSON_SCHEMA: Additional Pr
 
 ### 6. basic_auth bcrypt hash — no quotes
 Same rule as other services: the bcrypt hash goes unquoted in the Caddyfile `basic_auth` block. Single-quoting it makes Caddy treat the quotes as part of the hash, breaking authentication.
+
+### 7. Caddy `basic_auth` leaks the `Authorization` header to Crafty
+When a user authenticates with Caddy's `basic_auth`, Caddy forwards the `Authorization: Basic <base64>` header to the upstream (Crafty). Crafty sees this header and tries to use it for its own authentication, which fails because Crafty uses Bearer tokens or session cookies — not HTTP Basic. This causes "ACCESS_DENIED" and "An error occurred while authenticating the user" errors specifically for account operations: password changes, MFA setup, API key creation. Login itself often works because Crafty's login endpoint may handle the conflict differently.
+
+**Fix:** Strip the header before proxying with `header_up -Authorization` inside the `reverse_proxy` block. See the Caddy entry in Step 4.
+
+**Better fix:** Don't use Caddy's `basic_auth` on services that have their own login (Crafty, Forgejo, etc.). Double-auth is friction for users and causes this header leak. Only use `basic_auth` for services without built-in auth (Dozzle, Homepage, etc.).
+
+### 8. Crafty `base_url` must include protocol AND match the external domain — CSRF protection
+Crafty's `config.json` has `"base_url": "localhost:8443"` by default. When the browser accesses Crafty through a reverse proxy at `mc.oathless.dev`, Crafty's CSRF protection rejects all sensitive POST requests (password change, MFA setup, API key creation) because the `Origin`/`Host` headers don't match `base_url`. The error shown is "ACCESS_DENIED — An error occurred while authenticating the user."
+
+**Fix:** Update `base_url` to the full URL INCLUDING `https://` protocol. Without the protocol prefix, Crafty compares `Origin: https://mc.oathless.dev` against `base_url: mc.oathless.dev` and they silently don't match:
+
+```bash
+python3 -c "
+import json
+with open('./crafty/config/config.json') as f:
+    config = json.load(f)
+config['base_url'] = 'https://mc.oathless.dev'
+with open('./crafty/config/config.json', 'w') as f:
+    json.dump(config, f, indent=4)
+"
+docker compose restart crafty
+```
+
+### 9. Caddy rewrites Host header — cookie/CSRF domain mismatch
+Caddy's `reverse_proxy` rewrites the `Host` header to the upstream address (`crafty-http:8000`) by default. Crafty uses this Host value for setting session cookies and CSRF tokens. If Crafty sees `Host: crafty-http:8000` instead of `Host: mc.oathless.dev`, cookies are set for the wrong domain and the browser never sends them back.
+
+**Symptoms:** login succeeds (POST auth returns 200 + token), but every subsequent API call returns 403 Forbidden (CSRF) or "Invalid token" in the auth log. This tripped up debugging because login always worked — masking the real issue as an auth problem when it was a cookie domain problem.
+
+**Fix:** Explicitly forward the original Host header and `X-Forwarded-*` headers in Caddy:
+```caddy
+mc.oathless.dev {
+    reverse_proxy crafty-http:8000 {
+        header_up Host {http.request.host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+    }
+}
+```
+
+The `{http.request.host}` placeholder preserves the browser's original `mc.oathless.dev` Host header through the proxy chain. `X-Forwarded-Proto: https` tells Crafty the original request was HTTPS so it sets cookies with the `Secure` flag correctly.
 
 ## Vehicle Architecture (Multiple Servers)
 

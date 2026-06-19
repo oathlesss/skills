@@ -1,0 +1,5 @@
+# SOPS configuration for Docker Compose project secrets
+# Replace <AGE_PUBLIC_KEY> with the output of: age-keygen -y ~/.config/sops/age/keys.txt
+creation_rules:
+  - path_regex: secrets/.*
+    age: <AGE_PUBLIC_KEY>

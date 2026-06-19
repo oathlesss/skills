@@ -79,6 +79,27 @@ docker compose exec -T uptime-kuma sqlite3 /app/data/kuma.db \
 
 Status codes: `0` = PENDING, `1` = UP, `2` = DOWN.
 
+### Updating Existing Monitors
+
+When a service's name, hostname, or port changes, update the monitor row instead of deleting and recreating:
+
+```bash
+# Update a single monitor — use docker exec, not docker compose exec
+docker exec uptime-kuma sqlite3 /app/data/kuma.db \
+  "UPDATE monitor SET name='Vanilla MC', hostname='minecraft-vanilla', port=25565,
+   description='Minecraft 1.21.4 vanilla server' WHERE id=3;"
+```
+
+**⚠️ Use `docker exec` not `docker compose exec` for single SQL statements.** The compose variant requires `-T` and heredoc piping; plain `docker exec` accepts the SQL inline as a quoted argument, which is simpler for one-off commands.
+
+**Verify the update:**
+```bash
+docker exec uptime-kuma sqlite3 /app/data/kuma.db \
+  "SELECT id, name, hostname, port FROM monitor WHERE name LIKE '%MC%';"
+```
+
+Monitor changes are picked up on the next check interval — no restart needed for field updates (only new INSERTs require a restart for Uptime Kuma to discover them).
+
 ## Pitfalls
 
 ### DNS from Docker containers
