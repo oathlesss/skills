@@ -178,6 +178,25 @@ sops --input-type dotenv --output-type dotenv --encrypt secrets/mc.env > secrets
 
 SOPS defaults to JSON/YAML parsing. For `.env` files, **always** use `--input-type dotenv --output-type dotenv`. Without it, decryption fails with "invalid character looking for beginning of value." This applies to both `sops --encrypt` and `sops --decrypt`.
 
+### ⚠️ PITFALL: SOPS creation rules match the INPUT file path, not the output path
+
+The `.sops.yaml` creation rules use `path_regex` to decide which key to encrypt with. SOPS matches this against the **input file path** (the file being encrypted), not the output `.sops` file path. If you create a temp file in `/tmp/` and try `sops --encrypt /tmp/my.env > secrets/my.env.sops`, the regex `secrets/.*` won't match `/tmp/my.env` and SOPS falls through with **"error loading config: no matching creation rules found."**
+
+**Fix:** Create the plaintext file in the `secrets/` directory first, encrypt it in place, then clean up:
+
+```bash
+# WRONG — /tmp/ path doesn't match secrets/.* regex:
+echo "SECRET=value" > /tmp/my.env
+sops --encrypt /tmp/my.env > secrets/my.env.sops      # "no matching creation rules found"
+
+# RIGHT — file created in secrets/ directory:
+echo "SECRET=value" > secrets/my.env
+sops --encrypt secrets/my.env > secrets/my.env.sops    # matches regex, works
+rm secrets/my.env
+```
+
+This applies to both dotenv files and plain text files (like `cf_api_key.txt`). Always create the plaintext in `secrets/` before encrypting.
+
 ### ⚠️ docker compose config leaks secrets
 
 Running `docker compose config` with decrypted env files present prints all resolved secrets to stdout. Always clean up plaintext files before validation, or use a temporary directory.
@@ -909,7 +928,7 @@ The stack uses `itzg/minecraft-server:latest` for the Minecraft service. This im
 
 To install a CurseForge modpack (e.g. "Integrated Minecraft"), switch from a mod loader type to `AUTO_CURSEFORGE`:
 
-1. **Get a CurseForge API key** from https://console.curseforge.com/ — required for the auto-download feature
+1. **Get a CurseForge API key** from https://console.curseforge.com/ — required for discovery (API search, file listing) AND download. The CF v1 API rejects all requests without a key. You cannot even look up a modpack's project ID without one.
 2. Add it to `.env` as `CF_API_KEY='...'` (wrap in single quotes)
 3. Update `docker-compose.yml`:
 
@@ -960,19 +979,16 @@ The major version numbers in the error map as: 61=Java 17, 65=Java 21, 69=Java 2
 
 **⚠️ PITFALL: `LATEST` resolves to a version requiring the right Java image tag.** As of mid-2026, `VERSION: LATEST` resolves to Minecraft 26.2 which requires Java 25 (class file 69.0). The itzg image provides `java25` tags. Always match the Java image to the Minecraft version:\n\n| Minecraft Version | Java Required | Image Tag |\n|---|---|---|\n| 1.20.x (Forge) | Java 17 | `itzg/minecraft-server:java17` |\n| 1.21.x | Java 21 | `itzg/minecraft-server:java21` |\n| 26.x (latest) | Java 25 | `itzg/minecraft-server:java25` |\n\nClass file version numbers in the error map as: 61=Java 17, 65=Java 21, 69=Java 25. **Fix:** pin the correct image tag. For vanilla/latest always use `:java25` — the `:latest` image tag currently uses Java 21 and cannot run Minecraft 26.2.
 
-**⚠️ PITFALL: `$` in API keys.** CurseForge API keys often contain `$` characters (e.g. `$2a$10$...`). In `.env` files, **always wrap the key in single quotes** — without quotes, Docker Compose interprets `$2a`, `$10` etc. as variable names and substitutes them to empty strings, silently mangling the key. The container receives a truncated value and `mc-image-helper` fails with "Access to https://api.curseforge.com is forbidden." 
+**⚠️ PITFALL: `env_file:` also expands `$` — use `CF_API_KEY_FILE`.** When the API key is in an `env_file:` (e.g. SOPS-decrypted secrets file), Docker Compose STILL expands `$` signs. Single-quoting in dotenv files doesn't work the same way as in `.env`. The robust solution: mount a plain-text key file and reference it with `CF_API_KEY_FILE`:
 
-In the YAML, reference the env var normally (no extra escaping):
 ```yaml
-CF_API_KEY: ${CF_API_KEY}   # correct — grabs the quoted value from .env
+volumes:
+  - ./secrets/cf_api_key.txt:/run/secrets/cf_api_key:ro
+environment:
+  CF_API_KEY_FILE: /run/secrets/cf_api_key   # ← no $ expansion ever
 ```
 
-In `.env`:
-```
-CF_API_KEY='***'   # single quotes prevent $ expansion
-```
-
-**Diagnose** with `docker inspect minecraft --format '{{range .Config.Env}}{{println .}}{{end}}' | grep CF_API_KEY` to see what the container actually received.
+Keep the raw key in a SOPS-encrypted text file (`secrets/cf_api_key.txt.sops`) alongside dotenv secrets. `deploy.sh` decrypts both formats. See `references/minecraft-curseforge-modpacks.md` for the full setup.
 
 ### Multiple Servers (Two-Container Pattern)
 
@@ -1083,6 +1099,14 @@ docker compose up -d mc-router minecraft-vanilla minecraft-modded
 
 **Verification:** Both servers are reachable on port 25565. `ss -tlnp | grep 25565` should show ONLY mc-router listening — 25566 should NOT appear. Players connect to `mc.oathless.dev` or `modded.oathless.dev` with no port number.
 
+**⚠️ PITFALL: Health check port mismatch with mc-router.** The itzg health check pings the server on its `SERVER_PORT` (default 25565). When using mc-router where the server runs on a non-default internal port (e.g. 25566), the health check fails/stays "unhealthy" because it pings 25565. Fix by setting `SERVER_PORT` to match the mc-router backend port and `OVERRIDE_SERVER_PROPERTIES: "true"`:
+
+```yaml
+environment:
+  SERVER_PORT: "25566"                  # must match mc-router MAPPING backend port
+  OVERRIDE_SERVER_PROPERTIES: "true"   # required — applies SERVER_PORT to server.properties
+```
+
 ### RCON Console Access
 
 The `itzg/minecraft-server` image includes `rcon-cli` built-in — no extra tools needed. With Hermes on the host, you have a Minecraft console without any panel:
@@ -1098,6 +1122,19 @@ docker exec <container> rcon-cli "list"
 Hermes can execute these directly — just ask. No web UI, no Crafty, no `mcrcon` binary. The `rcon-cli` reads `RCON_HOST`, `RCON_PORT`, and `RCON_PASSWORD` from the container environment automatically.
 
 **⚠️ PITFALL: Don't pipe secrets into `rcon-cli` on the command line.** The `rcon-cli` tool uses the env vars set by the container — never pass `-p <password>` as a CLI argument. The password would appear in process listings and shell history. The container already has `RCON_PASSWORD` set, so `docker exec <container> rcon-cli "command"` Just Works without any credential exposure.
+
+### TPS Monitoring via RCON
+
+The native `/debug` command works with RCON and reports TPS directly — no mods needed:
+
+```bash
+docker exec minecraft-modded rcon-cli "debug start"
+sleep 5
+docker exec minecraft-modded rcon-cli "debug stop"
+# → Stopped tick profiling after 5.03 seconds and 101 ticks (20.10 ticks per second)
+```
+
+**⚠️ PITFALL: Mod TPS commands may be chat-only via RCON.** `/spark tps` and `/spark health` return empty responses via RCON — their output goes to chat, not the console stream. Use `/debug start/stop` for RCON-based TPS or interact via the chat in-game.
 
 ### Whitelist Management
 
@@ -1167,6 +1204,7 @@ curl -s "https://api.mojang.com/users/profiles/minecraft/<username>"
 | `CF_EXCLUDE_MODS` | Newline-delimited list of mod slugs to exclude |
 | `CF_OVERRIDES_EXCLUSIONS` | Ant-style paths to exclude from overrides extraction |
 | `CF_PARALLEL_DOWNLOADS` | Parallel mod downloads (default: 4) |
+| `CF_FORCE_SYNCHRONIZE` | Force full re-download of all mods/overrides. Set `"true"` when switching modpacks on an existing data directory |
 
 See `references/linux-hardware-inspection.md` for the full workflow.
 
@@ -1270,6 +1308,7 @@ dockge:
 - `templates/sops-config.yaml` — starter `.sops.yaml` (replace age public key placeholder)
 - `references/crafty-controller.md` — Crafty Controller setup, migration from itzg, API notes, pitfalls
 - `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
+- `references/minecraft-plugins.md` — switching to Paper/Purpur for plugins, plugin repos, version checking
 - `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)
 - `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers
 - `references/homepage-forgejo-dockge-dozzle.md` — Homepage, Forgejo, Dockge, and Dozzle: Compose snippets, Caddy entries, ports, resource usage, and verification

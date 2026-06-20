@@ -46,14 +46,26 @@ decrypt_secrets() {
 
     for sops_file in "$SECRETS_DIR"/*.sops; do
         [[ -f "$sops_file" ]] || continue
-        local env_file="${sops_file%.sops}"
+        local out_file="${sops_file%.sops}"
 
-        if "$SOPS" --input-type dotenv --output-type dotenv --decrypt "$sops_file" > "$env_file" 2>/dev/null; then
-            chmod 600 "$env_file"
-            green "  ✓ $(basename "$env_file")"
+        if [[ "$sops_file" == *.txt.sops ]]; then
+            # Plain text secrets (no dotenv wrapper)
+            if "$SOPS" --decrypt "$sops_file" > "$out_file" 2>/dev/null; then
+                chmod 600 "$out_file"
+                green "  ✓ $(basename "$out_file")"
+            else
+                red "  ✗ Failed to decrypt $(basename "$sops_file")"
+                failed=1
+            fi
         else
-            red "  ✗ Failed to decrypt $(basename "$sops_file")"
-            failed=1
+            # Dotenv secrets
+            if "$SOPS" --input-type dotenv --output-type dotenv --decrypt "$sops_file" > "$out_file" 2>/dev/null; then
+                chmod 600 "$out_file"
+                green "  ✓ $(basename "$out_file")"
+            else
+                red "  ✗ Failed to decrypt $(basename "$sops_file")"
+                failed=1
+            fi
         fi
     done
 

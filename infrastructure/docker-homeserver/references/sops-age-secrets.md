@@ -19,9 +19,10 @@ homeserver/
 ├── deploy.sh               # Decrypt → deploy → cleanup
 ├── docker-compose.yml      # Uses per-service env_file: (no ${VAR} substitution)
 └── secrets/
-    ├── mc.env.sops         # MC_RCON_PASSWORD=***
-    ├── zennotes.env.sops   # ZENNOTES_AUTH_TOKEN=***
-    └── tailscale.env.sops  # TAILSCALE_AUTHKEY=***
+    ├── mc.env.sops              # dotenv: MC_RCON_PASSWORD=***
+    ├── zennotes.env.sops        # dotenv: ZENNOTES_AUTH_TOKEN=***
+    ├── tailscale.env.sops       # dotenv: TAILSCALE_AUTHKEY=***
+    └── cf_api_key.txt.sops      # plain-text: raw key (no env var syntax)
 ```
 
 ## Step-by-Step Setup
@@ -130,18 +131,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 SOPS="${HOME}/.local/bin/sops"
 
-# Decrypt secrets
+# Decrypt secrets — dotenv for *.env.sops, plain for *.txt.sops
 for sops_file in secrets/*.sops; do
-    env_file="${sops_file%.sops}"
-    "$SOPS" --input-type dotenv --output-type dotenv --decrypt "$sops_file" > "$env_file"
-    chmod 600 "$env_file"
+    [[ -f "$sops_file" ]] || continue
+    out_file="${sops_file%.sops}"
+    if [[ "$sops_file" == *.txt.sops ]]; then
+        "$SOPS" --decrypt "$sops_file" > "$out_file"
+    else
+        "$SOPS" --input-type dotenv --output-type dotenv --decrypt "$sops_file" > "$out_file"
+    fi
+    chmod 600 "$out_file"
 done
 
 # Deploy
 docker compose up -d "$@"
 
-# Cleanup plaintext immediately
-rm -f secrets/*.env
+# Cleanup ALL plaintext immediately
+rm -f secrets/*.env secrets/*.txt
 ```
 
 ## Day-to-Day Operations
@@ -206,6 +212,9 @@ Docker Compose supports `${VAR}` in `env_file:` paths only if the variable is de
 
 ### ❌ Per-service env_file with same variable in environment block
 If a variable appears in both `env_file:` and `environment:`, the `environment:` value wins. Use one or the other — don't split secret vars between both.
+
+### ❌ Docker Compose expands `$` in env_file values — use plain-text .sops
+Secrets containing `$` characters (e.g. CurseForge API keys like `$2a$10$...`) get silently mangled by Docker Compose's variable substitution even when placed in `env_file:`. The container receives truncated values. **Fix:** Encrypt the raw value as a plain-text SOPS file (`secrets/cf_api_key.txt.sops`) and mount it as a file inside the container (`CF_API_KEY_FILE: /run/secrets/cf_api_key`). No env var syntax, no `$` expansion. See `references/minecraft-curseforge-modpacks.md` for the full pattern.
 
 ### ❌ Hermes output filter redacts secret values
 When verifying decryption or checking resolved config via Hermes' terminal tool, values matching secret patterns (passwords, tokens) are replaced with `***` in the output. Don't trust what you see — verify with line counts (`grep -c`, `wc -l`), length checks (`wc -c`), or hex dumps (`xxd`). A value that appears to contain literal `...` in terminal output may be the actual content or may be filter redaction. Use byte-level tools to confirm.

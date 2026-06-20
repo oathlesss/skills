@@ -40,6 +40,7 @@ By default, the latest modpack file and its mod loader are installed on every st
 - `CF_PARALLEL_DOWNLOADS`: parallel mod downloads (default: 4)
 - `CF_OVERRIDES_SKIP_EXISTING`: skip existing files in overrides (default: false)
 - `CF_FORCE_REINSTALL_MODLOADER`: force modloader reinstall (default: false)
+- `CF_FORCE_SYNCHRONIZE`: force full re-download of all mods/overrides (default: false). Set to `"true"` when switching modpacks on an existing data directory to avoid stale file conflicts
 
 ## API Key Handling
 
@@ -108,51 +109,69 @@ minecraft:
 
 ## Debugging: Key Issues
 
-### PITFALL: Docker Compose eats `$` in `.env` values
+### PITFALL: `env_file:` also has `$` expansion — use `CF_API_KEY_FILE` instead
 
-**Without single quotes**, Docker Compose treats `$` as a variable reference in `.env` files. A key like `$2a$10$ZOxGuEU4...` gets silently mangled — `$2a`, `$10`, `$ZOxGuEU4...` are each resolved as (empty) variable names. The container receives a truncated, useless key.
+**The problem:** Docker Compose expands `$` signs in `env_file:` values too, not just in `.env` files. When using `TYPE: AUTO_CURSEFORGE` with the API key in an env_file (e.g. SOPS-decrypted `secrets/mc.env`), `$` characters in the key get silently expanded to empty strings. The container's `mc-image-helper` logs:
 
-**Symptoms:** `mc-image-helper` reports `"Access to https://api.curseforge.com is forbidden or rate-limit has been exceeded"` even though the key is valid.
-
-**Diagnose with mc-image-helper directly:** The most reliable way to see what's happening is to invoke `mc-image-helper` directly with `DEBUG=true`. This shows the actual HTTP requests, response status codes, and the exact API key prefix the tool sees:
-
-```bash
-# Run mc-image-helper directly — shows raw HTTP requests and the actual key received
-docker run --rm \
-  -e CF_API_KEY="$2a$...82" \
-  -e DEBUG=true \
-  --entrypoint mc-image-helper \
-  itzg/minecraft-server:latest \
-  install-curseforge \
-  --slug integrated-minecraft \
-  --output-directory /tmp/test 2>&1 | head -60
+```
+ERROR : The API key should start with '$2a$10$' but yours looked like '$2a$10.*****82'. Make sure to escape dollar signs with two each.
 ```
 
-**Important:** When running via `docker run -e`, the shell itself also interprets `$` signs in double quotes. The debug output will show a telltale error if the shell ate the key:
-```
-[mc-image-helper] ERROR : The API key should start with '$2a$10$' but yours looked like 'a0.aOO6*****82'. Make sure to escape dollar signs with two each.
-```
+**Why this happens:** Docker Compose processes `env_file:` values through the same variable substitution engine as `.env` and `environment:` blocks. Even though documentation suggests env_file values are passed literally, the shell parser in Docker Compose sees `$2a$10$ZOxGu...` and treats each `$...` segment as a variable reference.
 
-This confirms the key was mangled. When the key IS correct (via docker compose + single-quoted .env), the same debug output shows successful HTTP 200 downloads.
+**The fix: `CF_API_KEY_FILE` + SOPS plain-text secret.** Mount the raw API key as a file inside the container — no escaping games, no shell expansion:
 
-**Also check the container env:**
-```bash
-docker inspect minecraft --format '{{range .Config.Env}}{{println .}}{{end}}' | grep CF_API_KEY
-```
-
-**Fix:** Always wrap the key in single quotes in `.env`:
-```
-CF_API_KEY='$2a$10$...'
-```
-
-**DO NOT** put quotes in the YAML — only in `.env`:
 ```yaml
-# CORRECT:
-CF_API_KEY: ${CF_API_KEY}
-
-# WRONG:
-CF_API_KEY: '${CF_API_KEY}'
+# docker-compose.yml
+services:
+  minecraft-modded:
+    image: itzg/minecraft-server:java25
+    env_file:
+      - ./secrets/mc.env          # RCON_PASSWORD, other non-$ secrets
+    volumes:
+      - ./secrets/cf_api_key.txt:/run/secrets/cf_api_key:ro
+    environment:
+      TYPE: AUTO_CURSEFORGE
+      CF_SLUG: "all-the-mods-10"
+      CF_API_KEY_FILE: /run/secrets/cf_api_key   # ← reads raw key from file
+      # No CF_API_KEY env var — avoids all $ expansion
 ```
+
+The key file is SOPS-encrypted alongside other secrets:
+
+```bash
+# secrets/cf_api_key.txt (one line, no quotes, no env var syntax)
+$2a$10$ZOxGuEU4zwq0M8FaNrLPP.aOO6NZxSKRmsEsUAKriiwQOi/wHSI82
+```
+
+```bash
+# Encrypt it
+sops --encrypt secrets/cf_api_key.txt > secrets/cf_api_key.txt.sops && rm secrets/cf_api_key.txt
+```
+
+**deploy.sh changes:** The deploy wrapper must handle both dotenv `.sops` files (`*.env.sops`) and plain-text `.sops` files (`*.txt.sops`). For `.txt.sops` files, decrypt without `--input-type dotenv`:
+
+```bash
+# In decrypt_secrets() — distinguish by extension
+if [[ "$sops_file" == *.txt.sops ]]; then
+    "$SOPS" --decrypt "$sops_file" > "$out_file"     # plain text
+else
+    "$SOPS" --input-type dotenv --output-type dotenv --decrypt "$sops_file" > "$out_file"
+fi
+```
+
+Cleanup removes ALL decrypted files after deploy, including `cf_api_key.txt`.
+
+**Diagnose:** Check what the container actually received:
+```bash
+# Wrong: shows truncated key
+docker exec minecraft-modded sh -c 'echo $CF_API_KEY | wc -c'
+
+# Right: with CF_API_KEY_FILE, the key is intact
+docker exec minecraft-modded cat /run/secrets/cf_api_key | wc -c
+```
+
+**When to use this:** Any secret containing `$` that needs to survive Docker Compose processing. CurseForge API keys are the most common case (bcrypt-like `$2a$10$...` format). RCON passwords and other alphanumeric secrets don't need this — they work fine in env_file.
 
 ### PITFALL: Testing the key independently
 
@@ -292,6 +311,52 @@ For a realistic simulation of N players exploring and building:
 - 5 players exploring + 80 zombies = 0.074ms tick time, 20.0 TPS (barely any load)
 - 900+ forceloaded chunks = "Can't keep up! 330 ticks behind" (synthetic edge case)
 - Normal 5-player gameplay: well within limits
+
+## Project Discovery — Finding the Modpack Slug / ID
+
+### PITFALL: CurseForge pages are JavaScript-rendered
+
+The CurseForge website loads content via client-side JavaScript. The initial HTML source contains **no project IDs, no file IDs, no mod names**. Shell-based scraping (`curl | grep` for `project-id`, `data-project-id`, or numeric IDs) will return nothing. The HTML is an empty JS shell — all data arrives via XHR/fetch after page load in a browser.
+
+**Symptoms:** `curl -sL "https://www.curseforge.com/minecraft/modpacks/<slug>" | grep -oP 'project.*\d+'` returns empty. No amount of regex or grep variation will find project metadata in the source.
+
+**Workaround:** Use the CurseForge API (requires an API key — see below) or look up the slug manually in a browser.
+
+### PITFALL: CF API requires a key for search/discovery — not just downloads
+
+The CurseForge v1 API endpoints **all** require `x-api-key` header authentication. This includes:
+- `GET /v1/mods/search` — searching for modpacks by name or slug
+- `GET /v1/mods/{id}/files` — listing available files
+- Every other v1 endpoint
+
+Without a key, even read-only discovery returns `403 Forbidden: API Key missing or invalid`. You cannot look up a project ID, file ID, or version list via the API without a CF_API_KEY.
+
+**Implication:** Getting a CurseForge API key (from https://console.curseforge.com/) is a **prerequisite for any CurseForge modpack deployment**, not just for downloading. Without one, you can't even determine the correct `CF_SLUG`, project ID, or available file versions programmatically.
+
+### PITFALL: Some major modpacks are CurseForge-exclusive
+
+Modrinth's API is public and requires no auth, making it a good fallback for discovery. However, many major kitchen-sink packs — including **All the Mods 10 (ATM10)** — are **exclusively on CurseForge**. Searching Modrinth for "ATM10" returns only individual add-on mods, not the pack itself. The same applies to ATM9, Enigmatica 9, and other large curated packs.
+
+**Modrinth availability check:**
+```bash
+curl -s "https://api.modrinth.com/v2/search?query=<pack-name>&facets=%5B%5B%22project_type%3Amodpack%22%5D%5D" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+if not data.get('hits'):
+    print('Not on Modrinth — CF API key required')
+for hit in data.get('hits', []):
+    print(f\"  {hit['title']} | {hit['slug']} | MC: {hit.get('versions',[])[:3]}\")
+"
+```
+
+If Modrinth returns no hits or only unrelated packs, the modpack is CF-exclusive and you need a CF_API_KEY.
+
+### Recommended Discovery Workflow
+
+1. **Get a CF API key** first — it's needed for everything: discovery, file listing, and downloading
+2. **Use the API to find the project:** `curl -s -H "x-api-key: $CF_KEY" "https://api.curseforge.com/v1/mods/search?gameId=432&classId=4471&searchFilter=<pack-name>"`
+3. **Extract the slug** from the API response to use as `CF_SLUG`
+4. **For ATM10 specifically:** the slug is `all-the-mods-10` — use `CF_SLUG: "all-the-mods-10"` or `CF_PAGE_URL: "https://www.curseforge.com/minecraft/modpacks/all-the-mods-10"`
 
 ## Client-Side Mod Handling
 
