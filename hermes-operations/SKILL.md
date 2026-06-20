@@ -1,12 +1,15 @@
 ---
 name: hermes-operations
-description: Config tuning, gateway setup, and provider management for Hermes Agent itself. Covers approvals, model/provider switching, Discord/Telegram setup, and config discovery patterns.
+description: Config tuning, gateway setup, provider management, and personality customization for Hermes Agent itself. Covers approvals, model/provider switching, Discord/Telegram setup, SOUL.md identity, and config discovery patterns.
 triggers:
   - Configuring or tuning Hermes Agent behavior (approvals, timeouts, modes)
   - Setting up messaging platforms (Discord, Telegram) via gateway
   - Adding, switching, or managing LLM providers and models
   - Questions about "how do I configure X in Hermes"
   - Provider fallback chain management
+  - Customizing Hermes' identity, personality, tone, or behavioral directives via SOUL.md
+  - Questions about making Hermes always do something (meta-prompting, style rules, etc.)
+  - Questions about secrets, credentials, tokens, or encrypted files — "where is X" or "how do I find X" for secrets
 ---
 
 # Hermes Agent Operations
@@ -147,6 +150,14 @@ hermes config set <key> <value> # set any key
 
 **⚠️ PITFALL: `hermes config get` returns exit code 2 for unset keys.** Don't interpret exit code 2 as "command failed" — it means the key has no configured value (i.e., using defaults). Use `hermes config show | grep` to see what's actually set vs. defaulted.
 
+## Secrets & Credential Handling
+
+**⚠️ PITFALL: Never access, decrypt, or read secrets without explicit permission.** When the user asks "where is X" or "how do I find X" for a secret (SOPS-encrypted files, `.env` files, tokens, passwords, API keys), give the location and the command to run — do NOT execute the decryption or read the value yourself. Only decrypt when the user explicitly asks for the value (e.g. "what is my token?" or "show me the secret").
+
+**Why:** `sops --decrypt` and similar commands reveal credentials to the agent's context, which the user may not want. The user may be asking about workflow/logistics, not the secret itself. Err on the side of not accessing secrets.
+
+**Safe response pattern:** "The token is at `path/to/file.sops`. Decrypt it with: `sops --input-type dotenv --output-type dotenv --decrypt path/to/file.sops`"
+
 ## Session & Context Health
 
 Config keys for keeping Hermes context fresh and manageable:
@@ -164,3 +175,86 @@ hermes config set compression.target_ratio 0.20
 ```
 
 These are "set and forget" — they prevent context bloat and stale sessions without ongoing attention. The dossier used these values for months on the cloud VM instance without issues.
+
+## Personality & SOUL.md
+
+`SOUL.md` is the agent's **primary identity file**. It occupies slot #1 of the system prompt — whatever you write there is injected verbatim into every conversation turn, before memory, before skills, before user messages. It's the most powerful mechanism for making Hermes consistently behave a certain way.
+
+### Where it lives
+
+```bash
+~/.hermes/SOUL.md
+# or $HERMES_HOME/SOUL.md for custom home directories
+```
+
+### How it works
+
+- Hermes reads SOUL.md at session start and injects it directly into the system prompt
+- No wrapper text is added — your content appears as-is
+- Hermes seeds a default SOUL.md automatically if one doesn't exist
+- Existing user SOUL.md files are **never overwritten** by Hermes
+- SOUL.md loads only from HERMES_HOME, not from the working directory
+- If SOUL.md is empty, the built-in Hermes Agent default identity is used instead
+
+### When to use SOUL.md vs other mechanisms
+
+| Mechanism | Use for | Persistence |
+|-----------|---------|-------------|
+| **SOUL.md** | Durable identity, tone, behavioral directives, meta-rules ("always do X") | Every session, every turn |
+| **AGENTS.md** | Project conventions, architecture, code style rules | Per-project sessions |
+| **Memory** | Facts about the user, environment, tool quirks | Cross-session recall |
+| **Skills** | Procedural workflows, multi-step task patterns | Loaded on demand |
+| **Personality presets** | Temporary session-level overlays (`/personality`) | Current session only |
+
+### Examples of good SOUL.md content
+
+- **Identity**: "You are Diaktoros, a direct and efficient assistant..."
+- **Behavioral directives**: "Before answering, always think through your approach first..."
+- **Tone rules**: "Be direct without being cold. Prefer substance over filler."
+- **Anti-patterns**: "Never fabricate. Never overexplain obvious things."
+- **Communication style**: "Keep explanations compact unless depth is useful."
+
+### Examples of what NOT to put in SOUL.md
+
+- One-off project instructions (use AGENTS.md instead)
+- File paths and repo conventions (use AGENTS.md instead)
+- Temporary workflow details (use a skill or AGENTS.md instead)
+- Environment-specific facts (use memory instead)
+
+### Editing SOUL.md
+
+Edit it directly — no Hermes CLI command needed:
+
+```bash
+# Open in your editor
+vim ~/.hermes/SOUL.md
+nano ~/.hermes/SOUL.md
+```
+
+Changes take effect on the **next session** or after `/new` — not mid-session.
+
+### Verifying it's loaded
+
+```bash
+# Check the file exists and has content
+cat ~/.hermes/SOUL.md
+
+# Verify personality config (should show 'none' unless a preset is active)
+hermes config show | grep -i personality
+```
+
+### Common use cases
+
+- **Meta-prompting**: Add a directive to always think through approach before answering
+- **Name/identity**: Replace "Hermes Agent" with a custom name like "Diaktoros"
+- **Style enforcement**: Mandate concise responses, prohibit certain patterns
+- **Tool-use rules**: Require tool execution over description, ban fabrication
+- **Domain posture**: "You are a pragmatic senior engineer" vs "You are a creative writer"
+
+### ⚠️ PITFALL: SOUL.md not taking effect
+
+If you edit SOUL.md but don't see changes:
+1. SOUL.md is loaded at **session start** — use `/new` to start a fresh session
+2. Check the file isn't empty (empty = fallback to default identity)
+3. Check you're editing the right `HERMES_HOME` — `echo $HERMES_HOME` then check `$HERMES_HOME/SOUL.md`
+4. Very large SOUL.md files are truncated at `context_file_max_chars` (default 20,000)

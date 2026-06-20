@@ -134,6 +134,7 @@ For an MVP, plan a focused week rather than an evening. A realistic range is oft
 
 ## Pitfalls learned
 
+- **Minecraft mod textures / small pixel art (16×16 or 32×32)**: AI generation is often the wrong tool here. SDXL/ComfyUI blurs at these scales and doesn't understand pixel grids. For geometric items (ingots, crystals, shards, pattern-based blocks), procedural generation with Pillow scripts produces faster, cleaner, perfectly consistent results. Reserve AI pipelines for concept art, organic textures, and entity sheets — not batch production of pixel-art item textures.
 - Do not infer character design from a project title or mechanics. If a game is web/silk/grapple themed, players do **not** necessarily want spider characters.
 - Do not write setup scripts that download IP-Adapter/ControlNet weights but omit the custom nodes needed to use them.
 - Do not put Windows first if the user says their RTX desktop runs Linux.

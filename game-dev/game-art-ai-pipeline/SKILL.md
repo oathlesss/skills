@@ -8,6 +8,10 @@ triggers:
   - SDXL game asset workflow
   - Steam AI art disclosure
   - AI-generated sprites, card icons, UI, or backgrounds
+  - Minecraft textures or mod art
+  - procedural pixel art generation
+  - generate item/block textures with Pillow
+  - generating art for a Minecraft mod
 ---
 
 # Game Art AI Pipeline
@@ -108,6 +112,10 @@ For an MVP, estimate roughly **15–33 hours** of human art work, not one evenin
 - UI: 2–4h
 - VFX: 0.5–1h
 
+## When NOT to use AI art pipelines
+
+- **Minecraft mod textures / pixel art at very small sizes (16×16 or 32×32)**: AI generation (SDXL/ComfyUI) blurs at these scales and doesn't understand the pixel grid. For geometric items (ingots, crystals, shards, pattern-based blocks), **procedural generation with Pillow scripts** is faster, perfectly consistent, and produces cleaner results. Reserve AI pipelines for concept art, organic textures (taint, entities, golems), and mood boards — not batch production of pixel-art item textures.
+
 ## Legal and provenance guardrails
 
 Every accepted production asset should have a provenance row before entering `assets/`.
@@ -131,5 +139,5 @@ Steam AI disclosure requires explaining pre-generated AI content. Provenance pre
 
 - `references/project-arachne-ai-art-pipeline.md` — concrete Project Arachne implementation: RTX 4070 setup scripts, prompt templates, palette, provenance CSV, and review corrections.
 - `references/model-license-quick-reference.md` — condensed model comparison table, legal/licensing decision matrix, and one-glance recommendations. Extracted from the full 72 KB comprehensive guide.
-- `references/procedural-pillow-character-art.md` — fallback when ComfyUI/image_gen toolset is unavailable: procedural character/avatar generation using only Pillow polygon primitives, with vision_analyze self-critique loop. Covers setup (uv + Pillow PEP 668 safe), silhouette construction from body landmarks, side-profile glute technique, color palette, and pitfall list (smooth interpolation merges limbs, front view can't show glutes, arc angles are degrees not radians).
+- `references/procedural-minecraft-textures.md` — first-choice approach for Minecraft mod item/block textures: 16×16 procedural generation with Pillow polygon primitives, proven texture shapes (gem, shard, ingot, nitor, alumentum), color-dict variant pattern, vision-model verification, and when to use procedural vs AI for pixel art.: procedural character/avatar generation using only Pillow polygon primitives, with vision_analyze self-critique loop. Covers setup (uv + Pillow PEP 668 safe), silhouette construction from body landmarks, side-profile glute technique, color palette, and pitfall list (smooth interpolation merges limbs, front view can't show glutes, arc angles are degrees not radians).
 - Project Arachne `research/ai-game-art-comprehensive-guide.md` (72 KB) — the full deep-dive: 15 models compared, ComfyUI workflows for spritesheets/icons/backgrounds, pixel art tools, 3D asset generation, AI animation tools, character consistency techniques ranked, UI/UX generation, legal per model with revenue caps, RTX 4070 VRAM budget. Load this when the quick reference isn't enough or the user asks about a specific tool/technique not covered in the skill.
