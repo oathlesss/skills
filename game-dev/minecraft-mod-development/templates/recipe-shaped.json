@@ -1,0 +1,18 @@
+{
+  "type": "modid:recipe_type",
+  "category": "misc",
+  "pattern": [
+    " S ",
+    "GWG",
+    " S "
+  ],
+  "key": {
+    "S": { "item": "modid:item_name" },
+    "G": { "item": "minecraft:glass" },
+    "W": { "item": "minecraft:stick" }
+  },
+  "result": {
+    "id": "modid:result_item",
+    "count": 1
+  }
+}

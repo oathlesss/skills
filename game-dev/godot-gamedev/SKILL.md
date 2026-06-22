@@ -176,7 +176,122 @@ For physics-heavy games (grappling, PinJoint2D, momentum):
 - Velocity damping above threshold may be needed for web/grapple physics
 - Per the Arachne milestones, PinJoint2D stability requires increased ticks
 
-## Placeholder art convention
+## Physics Processing Order ⚠️ CRITICAL
+
+The order of operations in `_physics_process` matters. Surface state (`is_on_floor`, `is_on_ceiling`, collision normals) is only valid AFTER `move_and_slide()`.
+
+**Correct order:**
+```
+1. Capture input (jump_buffer, key-held state)
+2. Apply gravity/movement/friction (use previous-frame surface)
+3. move_and_slide()       ← surface state updates here
+4. Detect surface          ← now current
+5. Execute jump/drop       ← surface is known
+```
+
+**Common pitfall:** checking `current_surface` before `_detect_surface()` runs. Since detection happens after `move_and_slide()`, any check before it uses the PREVIOUS frame's surface — causing missed surface transitions.
+
+**Fix:** split jump into `_capture_jump_input()` (before physics) and `_execute_jump()` (after detection).
+
+## Up-Direction-Relative Vector Math Reference
+
+When `up_direction` can change (wall/ceiling walking), ALL physics must be relative to it. Keep this table handy:
+
+| What | Formula | On flat ground (up=0,-1) |
+|------|---------|--------------------------|
+| Gravity direction | `up_direction.rotated(PI)` | `(0,1)` = DOWN ✓ |
+| Surface tangent (right) | `up_direction.rotated(PI/2)` | `(1,0)` = RIGHT ✓ |
+| Surface tangent (left) | `up_direction.rotated(-PI/2)` | `(-1,0)` = LEFT |
+| Jump direction | `velocity += up_direction * impulse` | `vy -= 600` = UP ✓ |
+| Moving "upward"? | `velocity.dot(up_direction) > 0` | vy < 0 → dot > 0 ✓ |
+
+**Three common sign errors:**
+
+1. **Tangent rotation**: `up_direction.rotated(PI/2)` not `-PI/2`. With `up=(0,-1)`: `PI/2` → `(1,0)` = RIGHT ✓. `-PI/2` → `(-1,0)` = LEFT ✗ (inverts A/D).
+2. **Jump direction**: `velocity += up_direction * impulse` not `-=`. `+= (-600)` → goes UP ✓. `-= (-600)` = `+= (0,600)` → goes DOWN ✗.
+3. **Jump cut condition**: `velocity.dot(up_direction) > 0` not `< 0`. During ascent: dot=500>0 ✓. `< 0` only fires during fall ✗.
+
+## Surface-Walking Advanced Patterns
+
+### The wall-snapping pitfall (8-direction raycasts)
+
+When using 8-direction raycasts for surface detection, **filter raycasts by gravity-direction alignment**. Without filtering, side-facing rays pick up nearby walls, override the surface normal, and the player's gravity flips — they get yanked sideways into invisible walls.
+
+Fix: only consider raycasts whose direction is within ~70° of the current gravity direction:
+```gdscript
+var ray_dir := ray.target_position.normalized()
+if ray_dir.dot(gravity_direction) < 0.34:  # cos(70°)
+    continue
+```
+
+Side walls are handled by `move_and_slide()` collision, not gravity rotation.
+
+### Hysteresis buffer management
+
+When aggregating normals over N frames:
+- Cap buffer size: `if buf.size() > hysteresis_frames * 3: buf.pop_front()`
+- Compare successive normals with `distance_to()` to detect inconsistency
+
+### Contextual controls per surface
+
+When `floor_max_angle = PI`, map A/D differently based on surface:
+
+| Surface | A | D |
+|---------|---|---|
+| Floor/Ceiling | left | right |
+| Right wall | descend | climb |
+| Left wall | climb | descend |
+
+Movement on walls uses `velocity.y` (screen-up = climb, screen-down = descend).
+
+### Gravity on walls
+
+Apply gravity on walls so descent is naturally faster than ascent. Ensure friction force > gravity force at rest:
+```gdscript
+friction_force = friction * walk_speed * delta  # e.g. 12 × 400 × 0.008 = 38.4
+gravity_force = gravity * delta                  # e.g. 1400 × 0.008 = 11.2
+# 38.4 > 11.2 → no sliding at rest ✓
+```
+
+## Input Map Configuration
+
+**Ponytail rule:** Godot editor writes verbose input map — keep only the keys you actually read in code. Delete unused actions. Standard platformers only need `move_left`, `move_right`, `jump`.
+
+**Keycodes for hand-authored project.godot:**
+- A=65, D=68, W=87, S=83
+- Space=32
+- Left=4194319, Right=4194321, Up=4194320, Down=4194322
+
+See `templates/project.godot` for a minimal working example.
+
+## Prototype Controller Verification Checklist
+
+After any physics change, test these scenarios:
+- [ ] A/D moves correct direction on flat ground
+- [ ] A/D moves correct direction after jumping onto a platform
+- [ ] Jump goes up, gravity brings player back down
+- [ ] Releasing jump early cuts height (variable jump)
+- [ ] Coyote time: jump just after walking off a ledge
+- [ ] Jump buffer: press jump just before landing
+- [ ] No ice-sliding when releasing all keys on any surface
+- [ ] Walking into a wall stops the player (doesn't clip through)
+- [ ] `godot --headless --quit` loads without errors
+- [ ] Tests pass: `godot --headless -s tests/test_player.gd`
+
+## References and Templates
+
+### References
+- `references/scene-examples.md` — complete CharacterBody2D player scene template
+- `references/testing.md` — GDScript headless testing patterns and pitfalls
+- `references/wall-snapping-bug.md` — full diagnosis of the surface-detection wall-snapping pitfall
+- `references/sign-error-examples.md` — worked examples of the three sign errors with manual verification on all surface orientations
+- `references/pitfalls-transcript.md` — 6 error transcripts with full reproduction and fix
+
+### Templates
+- `templates/project.godot` — minimal working project.godot with WASD+Space input map
+- `templates/test_runner.gd` — SceneTree-based headless test runner skeleton
+- `templates/player.gd` — CharacterBody2D player controller with surface walking, coyote time, jump buffer
+- `templates/headless_test_runner.gd` — alternative headless test runner
 
 For gameplay prototyping before the art pipeline:
 - Use `ColorRect` nodes in Godot (no external sprite files needed)

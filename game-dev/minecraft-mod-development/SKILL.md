@@ -186,6 +186,206 @@ Everything configurable via datapack JSON:
 - Recipe types via custom recipe serializers
 - Community-extensible by design
 
+## Block/Entity Registration Pitfalls
+
+### BaseEntityBlock requires codec() override
+**Symptom**: `YourBlock is not abstract and does not override abstract method codec() in BaseEntityBlock`
+**Fix**: Add a `MapCodec` field. Constructor must take `BlockBehaviour.Properties`:
+```java
+public static final MapCodec<MyBlock> CODEC = simpleCodec(MyBlock::new);
+public MyBlock(BlockBehaviour.Properties properties) { super(properties); }
+@Override protected MapCodec<MyBlock> codec() { return CODEC; }
+```
+`simpleCodec(MyBlock::new)` requires a `BlockBehaviour.Properties` constructor — a no-arg constructor fails.
+
+### Separate sub-packages need their own DeferredRegisters
+
+When adding a new package (e.g., `block/essentia/`) with its own blocks and block entities, create separate `DeferredRegister` instances and register them in the main `@Mod` constructor:
+
+```java
+// In Thaumcraft.java:
+com.thau.core.block.essentia.ThauBlocks.BLOCKS.register(modEventBus);
+com.thau.core.block.essentia.ThauBlocks.BLOCK_ITEMS.register(modEventBus);
+com.thau.core.block.essentia.ThauBlockEntities.REGISTRY.register(modEventBus);
+```
+
+Each sub-package's `ThauBlocks` class is self-contained — it owns its own `DeferredRegister<Block>` and `DeferredRegister<Item>`.
+
+### Check existing API signatures BEFORE writing new code
+
+This is the #1 cause of batch compile failures. Before writing any file that calls methods on existing classes, **read the actual source files** to confirm the real method signatures. Do not assume:
+
+- Package paths (e.g., `com.thau.lib.aspect` vs `com.thau.core.lib.aspect` — a single wrong prefix caused 9 files to break)
+- Method signatures (`AuraManager.drainVis` takes `(ServerLevel, BlockPos, float, boolean)`, not `(Level, BlockPos, int, int)`)
+- Constructor parameters (1.21.1 `ArmorItem` needs `Holder<ArmorMaterial>`, not `ArmorMaterial` directly)
+- Field names on records (`AspectStack` has `aspectId()` and `amount()`, not `.aspect()`)
+
+**Workflow**: write the first new file → `./gradlew build` → fix errors → then write the next. Do not batch-write 10+ files at once. Each file you write should reference only APIs you've confirmed exist.
+
+### Strip to minimal when compile errors appear anyway
+
+When you DO hit errors (wrong method signatures, missing fields), strip each broken class to its absolute minimal form — remove every method body that references uncertain APIs, keep only the constructor and serialization. Build, get green, then add complexity back one method at a time. If a file has 5+ errors, delete it entirely and start over — it's faster than patching.
+
+### CraftingTableBlock subclass cannot override codec()
+`CraftingTableBlock.codec()` returns `MapCodec<CraftingTableBlock>`. Don't override — the parent handles it. Just pass `BlockBehaviour.Properties` to super.
+`CraftingTableBlock.codec()` returns `MapCodec<CraftingTableBlock>`. Don't override — the parent handles it. Just pass `BlockBehaviour.Properties` to super.
+
+### FenceGateBlock — illegal forward reference
+`WoodType` must be declared ABOVE any block registration that references it in a lambda. Java's static initializer order matters.
+
+### TreeGrower takes ResourceKey, not ResourceLocation
+Use `ResourceKey.create(Registries.CONFIGURED_FEATURE, ResourceLocation.fromNamespaceAndPath(MODID, "name"))`.
+
+### Configured feature: avoid fancy_foliage_placer with IntProvider radius
+In 1.21.x, `fancy_foliage_placer`'s `radius` is a plain `int`, not `IntProvider`. Use `blob_foliage_placer` for reliability.
+
+### ItemInteractionResult.PASS does not exist
+Use `ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION`.
+
+### Entity base class for AI
+If entity uses `FloatGoal`, `HurtByTargetGoal`, or pathfinding goals, extend `PathfinderMob` not `Mob`. Use `createLivingAttributes()`.
+
+### EventBusSubscriber.Bus.MOD deprecation
+In NeoForge 21.1.234+, the `bus` parameter emits deprecation warnings. This is cosmetic — code still works.
+
+## Recipe System
+
+### Critical: Object ingredient format
+NeoForge 1.21.1 requires object format for ALL ingredients — even vanilla:
+```json
+// ✓ CORRECT:
+"key": { "S": { "item": "minecraft:stick" } }
+// ✗ WRONG:
+"key": { "S": "minecraft:stick" }
+```
+Batch-fix existing recipes with the Python script: `python3 scripts/recipe-fixer.py`.
+See `templates/recipe-shaped.json` for the correct template.
+
+### Custom recipe type + serializer
+1. Recipe class implementing `Recipe<SingleRecipeInput>` with custom `matches()`
+2. Static `Serializer` inner class with `MapCodec` and `StreamCodec`
+3. Registry: `DeferredRegister<RecipeType<?>>` + `DeferredRegister<RecipeSerializer<?>>`
+4. Register both in main mod constructor
+
+## Modpack Research (Modrinth API)
+
+For finding Minecraft modpacks by mod inclusion, version, or category. Full workflow in `references/modrinth-api-research.md`.
+
+### Quick reference: key project IDs
+| Mod | Project ID |
+|-----|-----------|
+| Ars Nouveau | `TKB6INcv` |
+| Create | `LNytGWDc` |
+| Create Aeronautics | `oWaK0Q19` |
+| Farmer's Delight | `R2OftAxM` |
+
+### Reverse-search pattern (most effective)
+1. Search for the rarest mod to get candidate packs
+2. For each candidate, fetch its dependency list
+3. Check for the other required mods by project ID
+4. Only resolve names for matches
+
+### Pitfalls
+- **Minecolonies on Modrinth is outdated** (only 1.18.2). Its addons confirm it exists for modern versions but distribution is on CurseForge.
+- **CurseForge pages are Cloudflare-protected**. Check GitHub for published modlists of major packs.
+- **Dependency listing is `embedded`** for modpack mods — don't filter by dependency type.
+- **Rate limiting**: batch-resolve IDs in chunks of 20-50 with small delays.
+
+## Project: Thaumcraft Recreation
+
+**Project path**: `/home/ruben/thaumcraft` | **Mod ID**: `thau` | **MC**: 1.21.1 NeoForge 21.1.234
+**Java**: JDK 21 at `/home/ruben/.local/java/jdk-21.0.11+10`
+
+Build & test:
+```bash
+cd /home/ruben/thaumcraft
+export JAVA_HOME=/home/ruben/.local/java/jdk-21.0.11+10
+./gradlew build                    # compile + jar
+timeout 35 ./gradlew runServer     # headless server test
+```
+
+### Package structure
+```
+src/main/java/com/thau/
+  lib/           API surface — aspects, datamap, mod compat events
+  core/          Implementation
+    aura/        AuraAttachment, AuraManager, AuraSyncPacket, VisNodeBlockEntity, GogglesHudOverlay
+    block/       Block classes + ThauBlocks (60+ blocks)
+    block/entity/ CrucibleBlockEntity, InfusionAltarBlockEntity, ResearchTableBlockEntity
+    block/essentia/ AlembicBlockEntity, CentrifugeBlockEntity, FocalManipulatorBlockEntity, HungryChestBlockEntity, InfernalFurnaceBlockEntity, ArcaneBoreBlockEntity
+    client/      ThaumonomiconScreen, AuraHudOverlay, ThaumometerBlockHud
+    command/     EldritchCommand (teleport)
+    entity/      GolemEntity, ThauEntities
+    item/        ThauItems, ThauSeals, WandItem, WardingFocusItem, GogglesOfRevealing, FocusDefinitions
+    recipe/      CrucibleRecipe, ThauRecipes
+    research/    ResearchAttachment, ResearchManager, ResearchSyncPacket
+    world/       ThauStructures, ThauDimensions, FluxWorldTick, WarpHandler
+    worldgen/    Tree features, placed features, biome modifiers, MagicalForest
+  Thaumcraft.java   Main mod class
+```
+
+### Implemented systems (60+ Java files)
+- **Vis/Aura** — per-chunk vis+flux floats, biome generation, neighbor balancing, moon phases, silverwood boost
+- **Aspects** — 52 code-registered aspects (TC4 data), AspectList, ItemAspects datamap
+- **Research** — multi-stage entries, scanning→points, warp tracking, ResearchTable card minigame
+- **Crafting** — Crucible (item absorption→essentia), Arcane Workbench, Infusion Altar (symmetry, instability, essentia sourcing)
+- **Wands** — 3 tiers (Wooden/Greatwood/Silverwood), 7 foci (Fire/Excavation/Shock/Frost/PortableHole/Warding/EqualTrade), vis drain from aura
+- **Golems** — 4 materials, 3 core types (Gather/Guard/Sort), 3 upgrades, 7 seal items + Golem Bell
+- **Flux/Taint** — taint spread, ethereal bloom cleansing, fibrous taint, tainted soil
+- **Warp** — 10 effect tiers (heartbeat, whispers, guardians, mist, mind spiders, sun scorn), eldritch research auto-unlock
+- **Eldritch** — void dimension, teleport, cultist spawns, obelisks
+- **Essentia piping** — Alembic (distills crucible essentia), Centrifuge (item→aspect breakdown), tubes
+- **Focal Manipulator** — crystal→focus crafting
+- **Machines** — Hungry Chest (auto-vacuum), Infernal Furnace (vis smelter, 2x speed), Arcane Bore (3×3 tunnel digger)
+- **Warded blocks** — indestructible via Warding Focus
+- **Goggles of Revealing** — aura HUD overlay
+- **Vis Nodes** — natural aura sources, TC4-style
+- **Magical Forest** — custom biome JSON
+- **Config** — TOML, all systems configurable
+
+### Known gaps (post Phase 9 audit)
+
+These systems are registered/exist but have partial implementations. Do not treat them as complete:
+
+| Gap | Status | What's missing |
+|-----|--------|----------------|
+| Essentia tubes | Blocks exist, **no network code** | Tubes don't transport essentia between machines — tube networking classes were deleted during a compile fix |
+| Eldritch structures | DeferredRegisters only | ThauStructures.java is just stubs — no NBT structure templates, no obelisk/maze/pillar generation |
+| Golem rendering | No custom renderer | Golems use vanilla entity rendering; invisible without textures or model JSON |
+| Cultist mobs | Deleted (compile error) | NearestAttackableTargetGoal type inference failed — fixable |
+| Infusion enchantments | Deleted (Aspect API mismatch) | 15 enchantment→aspect mappings defined but not wired to infusion altar |
+| Custom particles | Deleted (deprecated API) | Vis stream, flux rift particle classes exist but registration uses removed `@EventBusSubscriber(bus=…)` |
+| JEI integration | Deleted (no JEI dependency) | Recipe/aspect display plugin removed until JEI is added to build.gradle
+| Thaumonomicon GUI | Minimal | Research entry pages render but no category tabs or visual research tree |
+
+### Post-implementation audit pattern
+
+After a large batch session, run a systematic audit before reporting completeness:
+
+1. `find src -name '*.java' | sort` — full file inventory
+2. For each deleted/critical file from earlier commits, check `git show <commit> --stat` to see what was removed
+3. Cross-reference meta-prompt batch items against current file list
+4. Read key files to check whether they're functional or stubs
+5. Report honestly with ✅ / ⚠️ / ❌ categories
+
+Never claim "everything is done" without this audit. The user will catch it.
+
+### Aura System (TC6-derived)
+- Single vis/flux floats per chunk (not per-aspect arrays)
+- Base set at chunk generation from biome tag averaging + Gaussian noise
+- Regen, neighbor balancing, moon phase modulation
+- Flux saturation > 75% triggers rifts
+- Per-chunk state via AttachmentType on LevelChunk with dirty tracking
+- See `references/tc6-aura-algorithm.md` for full TC6 comparison
+
+### Recipe fixer script
+`scripts/recipe-fixer.py` batch-fixes old string-format recipes to object format for NeoForge 1.21.1.
+
+### Related project files
+- Plan: `/home/ruben/thaumcraft-remake-plan.md`
+- TC6 reference: `/home/ruben/thaumcraft-reference-tc6-source/`
+- TC4 reference jar: `/home/ruben/thaumcraft-reference/Thaumcraft-1.7.10-4.2.3.5.jar`
+
 ## Procedural art pipeline for textures
 
 **Default to procedural generation (Python + Pillow) for Minecraft pixel art.** Do not lead with AI image generation (SDXL/ComfyUI) for 16×16 or 32×32 textures.
@@ -200,8 +400,36 @@ Workflow: procedural scripts run first → manual touch-up in Aseprite where nee
 
 Ship playable milestones, not back-end frameworks. Each phase should produce something the player can interact with in-game. Strict phase gating — finish one before starting the next.
 
+### Continuous development loop (meta-prompt driven)
+
+When executing a large multi-batch plan (10+ items), use this pattern:
+
+1. **Write the meta-prompt first** — a self-contained prompt that lists ALL batch items, the working method (implement → build → verify → commit), and a stopping condition ("until there are no more gaps"). Give it to yourself.
+2. **Execute all batches without stopping** — do not stop at 6/16 and report "remaining items are pending." The user said "continuous loop until there are no more gaps" — that means KEEP GOING until every item is done or you hit a genuine blocker you cannot resolve.
+3. **Build after every subsystem** — `./gradlew build` must stay green. Fix compile errors before continuing.
+4. **Verify server loads** — `timeout 35 ./gradlew runServer` and confirm `Done (N.Ns)!` with no errors.
+5. **Commit after each batch** — atomic, well-described commits make rollback possible.
+6. **Never give a pending-items status dump** when you could just continue implementing. The user wants completion, not a progress report.
+7. **When the user asks to check again or verify completeness** — run the systematic gap audit (see Post-implementation audit pattern above), not a yes/no answer. Answer with the audit results.
+
+Pitfall: The user corrected you did NOT finish when work stopped at 6 of 16 items. If the meta-prompt says continuous, it means continuous. If the user asks whether everything is done, do not say yes until you have actually checked every file.
+
 ## References
 
-- `references/thaumcraft-remake-plan.md` — Full Thaumcraft recreation plan: system architecture, 9-phase roadmap with deliverables, performance strategy, risk analysis. This is the reference for large-scale Minecraft magic mod architecture.
-- `references/procedural-textures.md` — Pillow-based 16×16 texture generation with shape templates (crystal, shard, ingot, sphere, block), color palettes, and verification workflow. Includes pointer to the Thaumcraft Phase 1 generation script at `/home/ruben/thaumcraft-textures/generate_materials.py`.
-- `references/modrinth-api-research.md` — Modrinth v2 API workflow for discovering modpacks by mod combination. Covers search, dependency resolution, batch ID→name lookup, and the common cross-reference pattern. Use when the user asks "find me a modpack with X mods."
+- `references/thaumcraft-remake-plan.md` — Full Thaumcraft recreation plan: system architecture, 9-phase roadmap with deliverables, performance strategy, risk analysis.
+- `references/tc6-api-architecture.md` — Decompiled TC6 API design patterns from Azanor's original source.
+- `references/tc6-implementation-comparison.md` — System-by-system gap analysis between `thau` mod and TC6 source. Scorecard, missing features, implementation benchmarks.
+- `references/tc6-aura-patterns.md` — TC6 aura system mechanics (biome generation, neighbor balancing, moon phases, biome multipliers) with 1.21.1 porting notes.
+- `references/tc6-aura-algorithm.md` — Full TC6 aura algorithm comparison for the Thaumcraft recreation.
+- `references/attachment-patterns.md` — NeoForge AttachmentType patterns: per-chunk state with dirty tracking, ticking chunks near players, client-side LRU caching, and packet sync. Covers the gotcha that ChunkMap.getChunks() is protected in 1.21.x.
+- `references/procedural-textures.md` — Pillow-based 16×16 texture generation with shape templates, color palettes, and verification workflow.
+- `references/procedural-minecraft-textures.md` — Pillow texture generation patterns for ingots, crystals, shards, blocks, and tree items.
+- `references/texture-extraction.md` — Extracting and remapping textures from old mod JARs with Python zipfile.
+- `references/modrinth-api-research.md` — Modrinth v2 API workflow for discovering modpacks by mod combination.
+- `references/modpack-landscape-ars-create-aeronautics.md` — Concrete modpack landscape analysis: Ars Nouveau + Create + Aeronautics intersection.
+- `references/gap-analysis.md` — Systematic audit framework for mod projects. Steps for file inventory, batch cross-referencing, honest status reporting. Includes current Thaumcraft known gaps.
+
+## Templates and Scripts
+
+- `templates/recipe-shaped.json` — Correct NeoForge 1.21.1 shaped recipe JSON template (object ingredient format).
+- `scripts/recipe-fixer.py` — Batch-fix old string-format recipes to object format for NeoForge 1.21.1.
