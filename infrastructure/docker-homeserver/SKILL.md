@@ -470,7 +470,7 @@ When adding a service to the homelab, always do all three:
 
 1. **Docker Compose** — add the service block
 2. **Caddy reverse proxy** — add a subdomain entry
-3. **Uptime Kuma monitor** — insert via SQLite + restart. The user expects this without being asked.
+3. **Uptime Kuma monitor** — insert directly into SQLite via `docker exec uptime-kuma sqlite3` (see `references/uptime-kuma-monitors.md`). No restart needed — monitors take effect immediately.
 
 **Monitor insertion pattern (HTTP):**
 ```bash
@@ -657,11 +657,16 @@ netdata:
 
 ```
 metrics.oathless.dev {
+    basic_auth {
+        oathless $2a$14$HASH...
+    }
     reverse_proxy netdata:19999
 }
 ```
 
-Netdata exposes its dashboard on port 19999. Route it through Caddy (no direct port mapping) for automatic HTTPS. Add a Uptime Kuma HTTP monitor for `https://metrics.oathless.dev` so you know when metrics collection itself is down.
+Netdata has **no built-in auth** — always protect it with `basic_auth` (same hash as Homepage/Dozzle). Netdata exposes its dashboard on port 19999. Route it through Caddy (no direct port mapping) for automatic HTTPS.
+
+**Uptime Kuma:** Use a **TCP port monitor** targeting `netdata:19999` (internal Docker network). Don't use an HTTP monitor against the Caddy-proxied URL — `basic_auth` returns 401, which looks like a failure. The TCP check verifies the service itself is listening, bypassing auth.
 
 ## Uptime Kuma: Push Monitors + Hermes Cron
 
@@ -719,6 +724,114 @@ docker exec uptime-kuma sqlite3 /app/data/kuma.db \
 ```
 
 Monitor interval changes take effect immediately — no Uptime Kuma restart required.
+
+## Homelab Maintenance Cronjobs
+
+Every homelab needs automated maintenance. Four cronjobs cover the essentials: backups, disk watchdog, image updates, and Docker garbage collection. All use Hermes cron with `no_agent=true` (shell scripts, no LLM tokens per tick) except the update checker which needs reasoning to parse `docker compose pull` output.
+
+### Survey First, Then Implement
+
+Before suggesting cronjobs, **survey the current state**:
+
+1. `docker ps` — what's running?
+2. `cronjob action=list` — what crons exist?
+3. `df -h /` — disk usage
+4. `docker system df` — Docker waste
+5. `docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedAt}}'` — image staleness
+6. `du -sh /path/to/minecraft-*/data/world/` — world sizes
+
+This prevents redundant jobs and identifies the biggest gaps first.
+
+### The Four Essential Cronjobs
+
+#### 1. Minecraft World Backups (nightly)
+
+See the "World Backups" subsection under Minecraft Server above. Script at `templates/backup-minecraft.sh`.
+
+#### 2. Disk Space Watchdog (every 1m)
+
+Push-based Uptime Kuma monitor that alerts when `/` exceeds 80% usage. Follows the same Uptime Kuma push pattern (see above), but with a threshold check.
+
+**Step 1 — Create the push monitor** (generate token + insert via `docker exec uptime-kuma sqlite3`):
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(10)[:20])"
+# Use the token in:
+docker exec uptime-kuma sqlite3 /app/data/kuma.db \
+  "INSERT INTO monitor (name, active, user_id, interval, type, weight, push_token, created_date, maxretries, ...) VALUES ('Disk Space (/)', 1, 1, 180, 'push', 2000, '<TOKEN>', datetime('now'), ...);"
+```
+
+**Step 2 — Write the watchdog script** (`~/.hermes/scripts/push-disk-space.sh`):
+
+```bash
+#!/bin/bash
+set -euo pipefail
+THRESHOLD=80
+PUSH_TOKEN="<20-char-hex-token>"
+PUSH_URL="https://status.oathless.dev/api/push/${PUSH_TOKEN}"
+usage=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
+
+if [ "$usage" -gt "$THRESHOLD" ]; then
+    curl -sk "${PUSH_URL}?status=down&msg=Disk+${usage}%25+used+(threshold+${THRESHOLD}%25)&ping=" &>/dev/null
+else
+    curl -sk "${PUSH_URL}?status=up&msg=${usage}%25+used&ping=" &>/dev/null
+fi
+```
+
+**Step 3 — Create the cron job:**
+
+```
+cronjob action=create no_agent=true schedule="every 1m" script="push-disk-space.sh" deliver=local
+```
+
+**Interval rule:** `cron_interval ≤ monitor_interval / 2`. With a 180s Uptime Kuma window, run every 1m (≤90s). Wider Uptime Kuma interval avoids false DOWN alerts from scheduling jitter.
+
+See `templates/push-disk-space.sh` for the latest working version.
+
+#### 3. Docker Image Update Report (weekly)
+
+LLM-driven cron that runs `docker compose pull` and reports which images were updated. Report-only — does NOT restart containers. The user decides when to apply updates.
+
+```
+cronjob action=create schedule="0 9 * * 1" deliver=origin enabled_toolsets=["terminal"] name="Docker Image Update Report" prompt="..."
+```
+
+**Prompt template:** "Check for Docker image updates at /home/ruben/homeserver. Run `docker compose images` to capture current IDs, then `docker compose pull` to check for updates. Report only what was updated — 'All images up to date' if nothing changed. Do NOT run `docker compose up -d`."
+
+**⚠️ PITFALL: `docker compose pull` downloads updated images but doesn't restart containers.** Services keep running on the old image until a manual `docker compose up -d`. This is intentional — you don't want Minecraft servers restarting unattended.
+
+#### 4. Docker System Prune (monthly)
+
+Removes ALL unused images (not just dangling), stopped containers, and build cache. Runs on the 1st of each month.
+
+```bash
+#!/bin/bash
+# ~/.hermes/scripts/docker-prune.sh
+set -euo pipefail
+echo "=== Docker prune $(date) ==="
+echo "Before:"; docker system df
+docker system prune -af --volumes
+echo "After:"; docker system df
+```
+
+```
+cronjob action=create no_agent=true schedule="0 3 1 * *" script="docker-prune.sh" deliver=local
+```
+
+**`-a` flag is critical:** Without it, `docker system prune` only removes dangling images. With `-a`, it removes ALL images not referenced by any container — the ones actually wasting space.
+
+### Maintenance When Adding These
+
+After creating these cronjobs, always:
+
+1. **Verify the disk watchdog** — check Uptime Kuma heartbeat table:
+   ```bash
+   docker exec uptime-kuma sqlite3 /app/data/kuma.db \
+     "SELECT datetime(h.time, 'unixepoch', 'localtime'), status, msg FROM heartbeat h JOIN monitor m ON m.id = h.monitor_id WHERE m.name='Disk Space (/)' ORDER BY h.time DESC LIMIT 3;"
+   ```
+   Status 1=UP, 0=DOWN. Should show UP with current usage % within seconds.
+2. **Run the backup script once** to confirm it works and the directory is writable
+3. **Note the first backup** will run at the next 4am — no immediate verification needed
 
 ## Uptime Kuma Monitoring
 
@@ -1184,6 +1297,40 @@ curl -s "https://api.mojang.com/users/profiles/minecraft/<username>"
 3. Verify with `whitelist list`
 4. If `OVERRIDE_SERVER_PROPERTIES=false`, the RCON `whitelist on` is the only way to set `white-list=true` — `ENFORCE_WHITELIST` won't work
 
+### World Backups
+
+**Worlds have no built-in backup.** Docker volumes sit on the host filesystem with no snapshotting or replication. One chunk corruption = permanent loss. Nightly tar.gz backups are cheap insurance.
+
+**Script pattern** (`~/.hermes/scripts/backup-minecraft.sh`):
+
+```bash
+#!/bin/bash
+set -euo pipefail
+BACKUP_DIR="/home/ruben/homeserver/backups/minecraft"
+WORLDS_DIR="/home/ruben/homeserver"
+mkdir -p "$BACKUP_DIR"
+
+for server in vanilla modded; do
+    world_path="${WORLDS_DIR}/minecraft-${server}/data/world"
+    if [ -d "$world_path" ]; then
+        archive="${BACKUP_DIR}/${server}-$(date +%Y%m%d).tar.gz"
+        tar -czf "$archive" -C "$(dirname "$world_path")" world/
+        echo "Backed up ${server}: ${archive}"
+    fi
+done
+
+# Prune older than 7 days
+find "$BACKUP_DIR" -name '*.tar.gz' -mtime +7 -delete
+```
+
+**Cron job:** `cronjob action=create no_agent=true schedule="0 4 * * *" script="backup-minecraft.sh" deliver=local`
+
+- Runs nightly at 4am, no LLM tokens wasted
+- 7-day rolling retention — small worlds (sub-50MB) mean negligible storage cost
+- Backups live at `~/homeserver/backups/minecraft/` — NOT inside a Docker volume, so they survive container rebuilds
+
+See `templates/backup-minecraft.sh` for the latest working version.
+
 **Homepage:** List both servers separately on the dashboard with distinct descriptions:
 ```yaml
 - Vanilla MC:
@@ -1309,6 +1456,9 @@ dockge:
 - `templates/push-uptime-kuma.sh` — starter script for Uptime Kuma push monitors via Hermes cron
 - `templates/deploy-sops.sh` — deploy wrapper: decrypts secrets → runs docker compose → cleans up plaintext
 - `templates/sops-config.yaml` — starter `.sops.yaml` (replace age public key placeholder)
+- `templates/backup-minecraft.sh` — nightly Minecraft world backup script, 7-day retention
+- `templates/push-disk-space.sh` — disk usage watchdog script for Uptime Kuma push monitors
+- `templates/migrate-secrets.py` — migration helper for moving secrets between formats
 - `references/crafty-controller.md` — Crafty Controller setup, migration from itzg, API notes, pitfalls
 - `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
 - `references/minecraft-plugins.md` — switching to Paper/Purpur for plugins, plugin repos, version checking
