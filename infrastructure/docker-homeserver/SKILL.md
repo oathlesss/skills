@@ -430,9 +430,11 @@ Follow this sequence when adding a service to the stack:
 1. **Add the service block** to `docker-compose.yml` (network: `homeserver`, no host port mappings — route everything through Caddy)
 2. **Add a Caddy reverse proxy entry** in `caddy/Caddyfile` (choose a subdomain of `oathless.dev`)
 3. **Pull and start:** `docker compose pull <service> && docker compose up -d <service>`
-4. **Restart Caddy** (`docker compose restart caddy`) — the bind mount can cache, reload isn't reliable. Verify with `docker compose exec caddy cat /etc/caddy/Caddyfile`
+4. **Restart Caddy** (`docker compose restart caddy`) — the bind mount can cache, reload isn't reliable. Verify with `docker exec caddy cat /etc/caddy/Caddyfile`
 5. **Add Uptime Kuma monitor** — insert directly into SQLite (see `references/uptime-kuma-monitors.md`), then restart Uptime Kuma
 6. **Verify** with `curl -sk https://<domain>/`
+
+**For full-stack web apps** (Go backend + Vue/React frontend): see the **`fullstack-web-deploy`** skill for project scaffolding, multi-stage Dockerfiles, Go embed patterns, Vite proxy, and Tailwind theme setup. The docker-homeserver checklist above covers the homelab integration; `fullstack-web-deploy` covers the build pipeline.
 
 See `references/service-catalog.md` for deployed service configs and gotchas.
 
@@ -1299,6 +1301,7 @@ dockge:
 - `references/couchdb-livesync-config.md` — required CouchDB config (single-node + CORS) for Obsidian Live Sync
 - `references/zennotes-setup.md` — working ZenNotes Docker config with pitfalls and verification
 - `references/zennotes-internals.md` — codebase architecture, tech stack, data model, wikilink system, and graph-feature feasibility assessment
+- `references/go-vue-service.md` — Go+Vue SPA multi-stage Docker service pattern, Go embed quirks, Vue terminal UX pitfalls
 - `references/uptime-kuma-monitors.md` — programmatic monitor creation, DB schema, pitfall guide
 - `references/github-integration.md` — fine-grained PAT scoping, `gh` CLI auth, org isolation
 - `references/service-catalog.md` — deployed service configs, Caddy blocks, and gotchas (Homepage, Forgejo, Dockge, Dozzle, etc.)

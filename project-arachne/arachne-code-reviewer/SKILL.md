@@ -13,7 +13,7 @@ Meta-prompt for reviewing Godot 4.x GDScript code generated for Project
 Arachne. Load this skill when you need to review AI-generated code, validate
 that new code follows project conventions, or generate corrected versions.
 
-Also load `godot-player-controller` and `ponytail-review` for their
+Also load `godot-gamedev` and `ponytail-review` for their
 domain-specific rules — this skill covers Arachne-specific conventions
 not covered by those general skills.
 
@@ -47,7 +47,7 @@ Classify the code:
 
 ## Step 2: Run the Arachne Audit Checklist
 
-### Physics Rules (load godot-player-controller for details)
+### Physics Rules (load godot-gamedev for details)
 
 - [ ] Gravity is screen-space: `velocity.y += gravity * delta`
 - [ ] Jump is screen-space: `velocity.y = -jump_impulse`
@@ -177,10 +177,10 @@ godot --headless -s tests/test_player.gd
 
 ## Pitfalls
 
-### Reviewing without loading godot-player-controller
+### Reviewing without loading godot-gamedev
 The physics rules in this skill are a summary. For detailed sign-error
 analysis, surface-traversal edge cases, and coyote-time/jump-buffer
-overlap bugs, load `godot-player-controller`.
+overlap bugs, load `godot-gamedev`.
 
 ### Reviewing without loading ponytail-review
 The ponytail rules here are abbreviated. For the full over-engineering
@@ -211,7 +211,7 @@ After review:
 
 ## References
 
-- `godot-player-controller` skill — Physics rules with sign-error debugging
+- `godot-gamedev` skill — Physics rules with sign-error debugging
 - `ponytail-review` skill — Over-engineering audit
 - `/home/ruben/project-arachne/tests/test_player.gd` — Project test suite
 - `/home/ruben/project-arachne/research/meta-prompting-game-development.md` — Research doc

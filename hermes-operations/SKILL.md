@@ -92,6 +92,68 @@ https://discord.com/api/oauth2/authorize?client_id=YOUR_APP_ID&permissions=32641
 ```
 That permissions number covers: Read/Send Messages, Embed Links, Attach Files, Read Message History, Threads, Mentions, Slash Commands.
 
+## Desktop App & Remote Dashboard
+
+Hermes Desktop is a native Electron app (macOS/Linux/Windows) that can connect to a remote Hermes instance running on a homelab/VPS. It uses the **dashboard** as its backend — a separate process from the gateway.
+
+### Enabling the dashboard on the remote host
+
+The dashboard listens on port 9119 by default and must be started alongside the gateway:
+
+```bash
+# Start dashboard bound to all interfaces (not just localhost)
+hermes dashboard --no-open --host 0.0.0.0 --port 9119
+```
+
+The command prints a **session token** on startup — copy this. It's what the desktop app uses to authenticate.
+
+**⚠️ PITFALL: Dashboard is separate from gateway.** `hermes gateway run` handles messaging platforms (Discord, Telegram). `hermes dashboard` provides the web UI and remote-desktop API. Both must be running for Desktop to connect. The dashboard does NOT auto-start when the gateway starts.
+
+### Installing Desktop on the client machine
+
+Download from [GitHub Releases](https://github.com/NousResearch/hermes-agent/releases) — pick the `.AppImage`, `.deb`, `.dmg`, or `.exe` for your platform.
+
+### Connecting Desktop to the remote dashboard
+
+In the Desktop app:
+1. **Settings → Gateway → Remote gateway**
+2. Enter:
+   - **Remote URL:** `http://<host-ip>:9119` (e.g. `http://100.64.x.x:9119`)
+   - **Session Token:** the token printed by `hermes dashboard`
+3. Click **Test Remote** → Save
+
+### Security
+
+Port 9119 has **no built-in auth** beyond the session token. Do not expose it to the open internet. Recommended approaches:
+
+| Method | Setup | Best for |
+|--------|-------|----------|
+| **Tailscale** | Desktop connects to host's Tailscale IP; no port forwarding needed | Already using Tailscale mesh |
+| **SSH tunnel** | `ssh -L 9119:localhost:9119 user@homelab` on client, connect to `http://localhost:9119` | Quick, no extra software |
+| **Caddy reverse proxy** | Add HTTPS + basic auth in front of port 9119 | When Tailscale/SSH isn't an option |
+
+### Verification
+
+```bash
+# On the remote host — check dashboard is listening
+ss -tlnp | grep 9119
+
+# Quick connectivity test from client
+curl http://<host-ip>:9119/api/health
+```
+
+### Session token persistence
+
+For long-running setups, pin the session token so it survives dashboard restarts:
+
+```bash
+# Set in the dashboard's environment
+export HERMES_DASHBOARD_SESSION_TOKEN="your-token-here"
+hermes dashboard --no-open --host 0.0.0.0 --port 9119
+```
+
+Without this, each dashboard restart generates a new token and Desktop must be reconfigured.
+
 ## Provider & Model Management
 
 Hermes has one active primary provider/model. Switch between them:
@@ -118,6 +180,12 @@ hermes fallback list     # show current chain
 hermes fallback remove   # remove one entry
 hermes fallback clear    # remove all
 ```
+
+**Non-interactive alternative (for scripts/automation):**
+```bash
+hermes config set fallback_providers '[{"provider":"openrouter","model":"anthropic/claude-sonnet-4"}]'
+```
+Use this when the interactive picker is unavailable or you're setting up via config management.
 
 ### Multiple API Keys
 

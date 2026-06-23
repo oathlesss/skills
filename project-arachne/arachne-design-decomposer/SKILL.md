@@ -222,7 +222,7 @@ After decomposition:
 - `references/pipeline-pattern.md` — Live example: full pipeline execution (lava-pit boss, 2026-06-18)
 - `arachne-art-director` skill — Art Agent meta-prompt
 - `arachne-code-reviewer` skill — Code/QA Agent meta-prompt
-- `godot-player-controller` skill — Physics conventions
+- `godot-gamedev` skill — Physics conventions
 - `ponytail-review` skill — Simplicity enforcement
 - `/home/ruben/project-arachne/research/meta-prompting-game-development.md` — Full research doc, Section 6 (Agent Decomposition Architecture)
 - `/home/ruben/project-arachne/tools/prompts/arachne_prompts.txt` — Current prompt templates

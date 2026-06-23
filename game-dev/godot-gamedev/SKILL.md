@@ -101,6 +101,43 @@ See `references/scene-examples.md` for a complete CharacterBody2D player scene t
 
 Do not leave un-pushed commits. The user expects changes to be on the remote after you say "done."
 
+### Pre-Commit Hook
+
+Prevent broken commits with a `.git/hooks/pre-commit` that runs build + test:
+```bash
+#!/bin/bash
+set -e
+GODOT="${HOME}/.local/bin/godot"
+
+# Verify project loads without errors
+"$GODOT" --headless --quit 2>&1 | tail -5
+
+# Run headless tests
+"$GODOT" --headless -s tests/test_player.gd
+```
+This catches both project-load failures (broken .tscn, missing resources) and
+test regressions before they reach the remote. Add it early — the hook
+pays for itself the first time it blocks a bad commit.
+
+## Pre-commit Hook (strongly recommended)
+
+Automate the verify→test gate so broken commits can't land:
+
+```bash
+# .git/hooks/pre-commit
+#!/bin/bash
+set -e
+GODOT="${HOME}/.local/bin/godot"
+"$GODOT" --headless --quit 2>&1 | tail -5
+if ! "$GODOT" --headless -s tests/test_player.gd 2>&1 | tail -10; then
+    echo "❌ Tests failed — commit blocked."
+    exit 1
+fi
+echo "✓ All checks passed — allowing commit."
+```
+
+Project Arachne at `/home/ruben/project-arachne` already has this hook installed.
+
 ## GDScript movement pitfalls
 
 ### `move_toward` on velocity.y cancels gravity
