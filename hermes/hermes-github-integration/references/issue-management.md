@@ -45,3 +45,4 @@ Remove labels: `--remove-label`. Replace all: `--label "a,b,c"`.
 - **Labels silently ignored on create:** If a label doesn't exist, `gh issue create --label "new-label"` creates the issue without it — no error. Create labels first, then create issues, or create issues first and add labels via `gh issue edit --add-label` (which DOES error on missing labels).
 - **Commas in label args:** `--label "a, b"` (with space) doesn't work. Use `--label "a,b"`.
 - **Body formatting:** GitHub-flavored Markdown works in issue bodies. Checkboxes (`- [ ]`) render as task lists. Backtick-quote file paths and code references.
+- **Forgejo-specific:** Labels must be numeric IDs, not names. Create issues without labels, then use `PUT /repos/.../issues/{n}/labels` with `{"labels":[id1,id2]}`. See `references/forgejo-api-quirks.md` for full details.

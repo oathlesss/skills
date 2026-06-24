@@ -54,6 +54,24 @@ git.oathless.dev {
 }
 ```
 
+**⚠️ PITFALL: SSH port not exposed — `git@git.oathless.dev` will time out.** Forgejo runs SSH internally on port 22, but the compose config has no `ports:` mapping. Host SSH uses port 22, so `git@git.oathless.dev:22` is consumed by the host sshd (or nothing), not Forgejo. Fix — add a port mapping using a non-standard host port:
+
+```yaml
+forgejo:
+  ports:
+    - "2222:22"      # Forgejo SSH (host 2222 → container 22)
+```
+
+Then configure `~/.ssh/config`:
+
+```
+Host git.oathless.dev
+    Port 2222
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+Alternatively, skip SSH entirely and use HTTPS with a Forgejo access token (no compose change needed): Settings → Applications → Generate Token with `write:repository` scope, then use `https://<token>@git.oathless.dev/...` or configure git credential helper.
+
 **Gotchas:**
 - First visit triggers web installer — set up admin account, pick SQLite
 - Tag `10` is the latest major version (as of mid-2026); check for newer tags

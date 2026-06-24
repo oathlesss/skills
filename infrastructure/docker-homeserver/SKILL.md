@@ -4,6 +4,7 @@ description: Patterns for Docker Compose homeserver services — VPN tunnels, re
 triggers:
   - Adding or checking any service in an existing docker-compose.yml
   - Setting up or configuring Homepage (gethomepage.dev), Forgejo, Dockge, or Dozzle
+  - Pushing local repos to Forgejo, adding/verifying Forgejo git remotes, or diagnosing Forgejo SSH/HTTPS access
   - Adding Caddy `basic_auth` password protection behind the reverse proxy
   - Configuring Docker Compose dashboard/services/bookmarks/widgets YAML
   - Resolving Docker volume permission issues (root-owned directories, no sudo)
@@ -227,6 +228,10 @@ cat ~/.config/sops/age/keys.txt
 ```
 
 Lost key = permanently inaccessible secrets. No recovery path.
+
+### ProtonPass CLI Alternative
+
+For replacing SOPS+age with ProtonPass CLI (pull-from-API model using PAT/AI access tokens), see `references/protonpass-cli-secrets.md` for the full migration analysis, trade-off matrix, and open questions.
 
 ### Templates
 
@@ -1452,6 +1457,7 @@ dockge:
 - `references/uptime-kuma-monitors.md` — programmatic monitor creation, DB schema, pitfall guide
 - `references/github-integration.md` — fine-grained PAT scoping, `gh` CLI auth, org isolation
 - `references/service-catalog.md` — deployed service configs, Caddy blocks, and gotchas (Homepage, Forgejo, Dockge, Dozzle, etc.)
+- `references/forgejo-git-access.md` — Forgejo SSH port exposure, key setup, HTTPS token alternative, and comparison matrix
 - `references/homepage-config-ruben.md` — working Homepage YAML configs for Ruben's homelab (services, widgets, bookmarks, icons verified)
 - `templates/push-uptime-kuma.sh` — starter script for Uptime Kuma push monitors via Hermes cron
 - `templates/deploy-sops.sh` — deploy wrapper: decrypts secrets → runs docker compose → cleans up plaintext

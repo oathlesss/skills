@@ -244,6 +244,18 @@ hermes config set compression.target_ratio 0.20
 
 These are "set and forget" — they prevent context bloat and stale sessions without ongoing attention. The dossier used these values for months on the cloud VM instance without issues.
 
+## Session Database & Cronjobs
+
+Session data lives in SQLite at `~/.hermes/state.db`. Full schema (sessions + messages tables, all columns) and query patterns for finding inactive sessions, building summarization cronjobs, and programmatic access are documented in:
+
+→ `references/hermes-session-db.md`
+
+Key patterns:
+- **Inactivity detection:** `MAX(m.timestamp)` subquery with `HAVING last_ts < unixepoch() - N`
+- **Cron agent access:** Use `terminal` (Python + sqlite3), not `execute_code` (blocked in cron context)
+- **Deduplication:** Tracking file with one session ID per line, checked before each run
+- **Minimal toolsets:** `["terminal", "file", "session_search"]` — only what the cronjob needs
+
 ## Personality & SOUL.md
 
 `SOUL.md` is the agent's **primary identity file**. It occupies slot #1 of the system prompt — whatever you write there is injected verbatim into every conversation turn, before memory, before skills, before user messages. It's the most powerful mechanism for making Hermes consistently behave a certain way.

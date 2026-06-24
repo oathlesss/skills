@@ -11,6 +11,7 @@ triggers:
   - Resetting / starting fresh on a repo ("reset the repository", "start fresh")
   - Creating or managing GitHub issues / labels / milestones
   - Working with GitHub repos in any capacity
+  - Forgejo / Gitea self-hosted Git — see references/forgejo-api-quirks.md
 ---
 
 # Hermes GitHub Integration
@@ -172,6 +173,23 @@ Common commands:
 - `gh search repos <query>` / `gh search issues <query>`
 - `gh notifications` — list unread notifications
 - `gh label list` / `gh label create` / `gh issue edit --add-label`
+
+## Forgejo (Self-Hosted Git)
+
+For Forgejo / Gitea instances (like `git.oathless.dev`), the `gh` CLI is
+GitHub-specific and won't authenticate. Use curl + Bearer token instead.
+
+Full details: **`references/forgejo-api-quirks.md`** — covers token extraction
+from `git credential fill`, the label ID-vs-name quirk, and the PUT-vs-PATCH
+endpoint difference.
+
+Quick summary of the three critical differences:
+1. **Auth:** `gh auth login` doesn't work for Forgejo. Extract token from
+   `git credential fill` and use `curl -H 'Authorization: token <TOKEN>'`.
+2. **Labels on create:** Forgejo rejects label names — must be int64 IDs.
+   Create issues without labels, then apply via the labels endpoint.
+3. **Label update endpoint:** Must use `PUT /repos/.../issues/{n}/labels`
+   with `{"labels":[id1,id2]}`. `PATCH /issues/{n}` silently ignores labels.
 
 ## Repo Operations
 
