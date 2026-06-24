@@ -13,6 +13,7 @@ Extract captions from a YouTube video and produce a structured summary without w
 - "Summarize this video"
 - "What's in this YouTube video?"
 - User drops a `youtube.com` or `youtu.be` link asking for a recap
+- User asks for a chronological list of what happens across a YouTube playlist/series
 - Any request to extract information from a YouTube video by URL
 
 ## Finding Videos
@@ -49,6 +50,22 @@ yt-dlp --print title --print duration --print uploader --print upload_date '<URL
 
 If the URL has query parameters (e.g. `?si=...`), strip them or include them — yt-dlp handles both.
 
+### 2b. Extract videos from a playlist
+
+When the user provides a playlist URL instead of a single video:
+
+```bash
+# Get all video IDs and titles from a playlist
+yt-dlp --flat-playlist --print "%(id)s ||| %(title)s" '<PLAYLIST_URL>' 2>/dev/null
+```
+
+To get the channel/uploader name from a playlist (flat mode omits it):
+
+```bash
+# Extract channel name from the first video
+yt-dlp --playlist-items 1 --print "%(uploader)s" '<PLAYLIST_URL>' 2>/dev/null
+```
+
 ### 3. Check available subtitles
 
 ```bash
@@ -78,7 +95,9 @@ This produces a `.vtt` file (or `.srt` if `--convert-subs srt` is used with ffmp
 
 Auto-generated VTT files have a specific quirk: **every caption appears twice** — once with word-level timing tags (`<00:00:00.400><c> word</c>`) and once as clean text on the next "cue." You MUST deduplicate consecutive identical lines.
 
-Use this Python pattern:
+Use the bundled script: `python3 scripts/parse_vtt.py /tmp/video_subs.en.vtt --chunks 5 --out-prefix /tmp/vid1`
+
+Or inline:
 
 ```python
 import re
@@ -111,19 +130,28 @@ with open('/tmp/video_text.txt', 'w') as f:
 
 ### 6. Chunk and read
 
-Long videos (30+ min) produce 50K+ characters of text. Chunk into ~15K character pieces:
+Long videos (30+ min) produce 50K+ characters of text. The deduplicated output is a single line (joined with spaces) — **`read_file` truncates single-line files to ~500 chars**. You MUST split into multiple files with proper line breaks before reading. Use sentence-based splitting for readable chunks:
 
 ```python
+import re
+
 with open('/tmp/video_text.txt') as f:
     text = f.read()
 
-chunk_size = 15000
-for i, start in enumerate(range(0, len(text), chunk_size)):
+# Split on sentence boundaries for readable chunks
+sentences = re.split(r'(?<=[.!?])\s+', text)
+num_chunks = 5  # Adjust based on total length: 3 for <15K chars, 5 for 15-50K, 8+ for 50K+
+chunk_size = len(sentences) // num_chunks
+
+for i in range(num_chunks):
+    start = i * chunk_size
+    end = start + chunk_size if i < num_chunks - 1 else len(sentences)
+    chunk = ' '.join(sentences[start:end])
     with open(f'/tmp/video_chunk_{i}.txt', 'w') as out:
-        out.write(text[start:start+chunk_size])
+        out.write(chunk)
 ```
 
-Read each chunk with `read_file`, then synthesize a summary.
+Read each chunk with `read_file`, then synthesize a summary. For shorter videos (<15K chars deduplicated), 3 chunks suffice. For 30K+ chars, use 5+ chunks.
 
 ### 7. Structure the summary
 
@@ -137,6 +165,7 @@ Produce a clear, scannable summary:
 ## Pitfalls
 
 - **VTT duplication**: Auto-generated captions repeat every line twice. If you don't deduplicate, the summary will read like gibberish with doubled text.
+- **`read_file` truncates single-line files**: After deduplication, the clean text is a single line (lines joined with spaces). `read_file` truncates to ~500 chars for files with no newlines. Always split into sentence-based chunks and write each chunk as its own file with proper line breaks before reading. See Step 6 for the sentence-splitting script.
 - **No subtitles at all**: Some videos have no captions. Tell the user plainly — don't try to fabricate a summary from metadata alone.
 - **JS runtime warning**: yt-dlp may warn about missing JavaScript runtime. This is safe to ignore for subtitle-only extraction.
 - **ffmpeg missing**: yt-dlp may warn about ffmpeg not found. Only matters for format conversion (SRT). VTT is fine as-is.
@@ -147,15 +176,30 @@ Produce a clear, scannable summary:
 
 ### 8. Batch processing (multiple videos)
 
-When the user wants several videos summarized, download all captions in parallel:
+When the user wants several videos or an entire playlist summarized, download all captions in parallel.
+
+**From a playlist** (preferred — extract IDs first, then batch-download):
+
+```bash
+# Step 1: Extract all video IDs from the playlist
+yt-dlp --flat-playlist --print "%(id)s" '<PLAYLIST_URL>' 2>/dev/null > /tmp/video_ids.txt
+
+# Step 2: Download all captions in parallel
+cd /tmp && while read vid; do
+  yt-dlp --skip-download --write-auto-subs --sub-lang en --output "/tmp/yt_vid_${vid}" "https://youtu.be/${vid}" 2>&1 | grep -E '(Downloading|ERROR|Writing|has no)' &
+done < /tmp/video_ids.txt
+wait
+```
+
+**From explicit video IDs:**
 
 ```bash
 cd /tmp && for vid in VID_ID1 VID_ID2 VID_ID3; do
-  yt-dlp --skip-download --write-auto-subs --sub-lang en --output \"/tmp/\${vid}\" \"https://youtu.be/\${vid}\" 2>&1 | grep -E '(Downloading|ERROR|Writing|has no)'
+  yt-dlp --skip-download --write-auto-subs --sub-lang en --output "/tmp/yt_vid_${vid}" "https://youtu.be/${vid}" 2>&1 | grep -E '(Downloading|ERROR|Writing|has no)'
 done
 ```
 
-Process each VTT with the same parse→deduplicate→chunk→read pipeline. Videos under 20 minutes can usually be read in one pass without chunking.
+Process each VTT with the same parse→deduplicate→chunk→read pipeline. For playlist series summaries, group output per-video with episode titles as headers. Videos under 20 minutes can usually be read in one pass without chunking.
 
 ## Verification
 

@@ -1,16 +1,26 @@
 ---
 name: go-vue-fullstack
-description: Build and deploy Go backend + Vue 3 frontend apps as a single Docker container behind Caddy. Covers monorepo layout, Go embed for SPA, multi-stage Dockerfile, Vite proxy, Tailwind v4 setup, focus-management for reactive UIs, and homelab deployment.
+description: Build and deploy Go backend + Vue 3 frontend apps as a single Docker container behind Caddy. Covers monorepo layout, Go embed for SPA, multi-stage Dockerfile, Vite proxy, Tailwind v3/v4 setup, focus-management for reactive UIs, homelab and Hetzner Cloud deployment, and Forgejo repo creation.
 triggers:
   - Building a Go + Vue website or webapp
-  - Deploying a fullstack app to the homelab behind Caddy
+  - Deploying a fullstack app to the homelab or Hetzner Cloud behind Caddy
   - Setting up a Go project with an embedded Vue SPA
   - Creating a terminal-style, CLI-style, or portfolio website
+  - Scaffolding a new fullstack project with PLAN.md and Forgejo repo
 ---
 
 # Go + Vue Fullstack App
 
 Monorepo pattern for a Go backend + Vue 3 frontend deployed as a **single Docker container** behind Caddy on the homelab.
+
+## Project Setup
+
+### Scaffolding a new project
+
+1. Create a `PLAN.md` first — architecture, tech choices, deployment, monetization strategy
+2. Scaffold: `mkdir -p project/{backend/{handlers,db,auth},frontend/src/{components,lib,assets},scripts}`
+3. `git init && git branch -m main`
+4. Create the repo on Forgejo (see `references/forgejo-repo-create.md`) and push
 
 ## Project Structure
 
@@ -40,6 +50,54 @@ project/
 ## Go: Embed Vue SPA + API + SPA Fallback
 
 ### Embed pattern (`internal/handler/spa.go`)
+
+Two approaches — use the **file-existence pattern** (recommended) for robustness, or the **dot-check pattern** for simplicity when you're confident all static assets have file extensions.
+
+**Recommended: file-existence pattern** (from `### Robust SPA handler` pitfall section above):
+
+```go
+package handler
+
+import (
+    "embed"
+    "io/fs"
+    "net/http"
+    "path/filepath"
+    "strings"
+)
+
+//go:embed all:dist
+var dist embed.FS
+
+func SPAHandler() http.HandlerFunc {
+    staticFS, err := fs.Sub(dist, "dist")
+    if err != nil {
+        return func(w http.ResponseWriter, r *http.Request) {
+            http.Error(w, "SPA not available", 503)
+        }
+    }
+
+    return func(w http.ResponseWriter, r *http.Request) {
+        path := strings.TrimPrefix(r.URL.Path, "/")
+        f, err := staticFS.Open(path)
+        if err == nil {
+            defer f.Close()
+            if stat, _ := f.Stat(); !stat.IsDir() {
+                http.FileServer(http.FS(staticFS)).ServeHTTP(w, r)
+                return
+            }
+        }
+        // SPA fallback
+        index, _ := fs.ReadFile(staticFS, "index.html")
+        if ext := filepath.Ext(r.URL.Path); ext != "" {
+            w.Header().Set("Content-Type", contentType(ext))
+        }
+        w.Write(index)
+    }
+}
+```
+
+**Simpler: dot-check pattern** (good enough when all static assets have file extensions and no partial-path routes exist):
 
 ```go
 package handler
@@ -76,7 +134,9 @@ func (s *SPA) Serve(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-The `//go:embed all:dist` directive reads from a `dist/` directory relative to the source file. In the Dockerfile, copy the Vue build output there before the Go build.
+The `//go:embed all:dist` directive reads from a `dist/` directory relative to the source file. The `all:` prefix includes hidden files (starting with `.` or `_`). Without `all:`, hidden files are skipped — for frontend builds this rarely matters, but use `all:` to be safe.
+
+In the Dockerfile, copy the Vue build output there before the Go build. See the pitfall above about COPY trailing slashes.
 
 ### API handler pattern
 
@@ -106,11 +166,13 @@ mux.HandleFunc("/", spa.Serve)
 # Stage 1: Build Vue frontend
 FROM node:22-alpine AS frontend
 WORKDIR /src
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install --no-audit   # npm install works without lockfile; use npm ci when lockfile exists
 COPY frontend/ ./
 RUN npm run build
+```
 
+**⚠️ PITFALL: `npm ci` vs `npm install` in Docker:** `npm ci` requires a `package-lock.json` and fails if it's missing (e.g., new projects before `npm install` has been run locally). Use `npm install --no-audit` for the initial Dockerfile — it works with or without a lockfile. Once you have a committed lockfile, switch to `npm ci` for reproducible builds. The `*` glob in `COPY frontend/package-lock.json*` makes the COPY not fail when the file is absent.
 # Stage 2: Build Go backend with embedded frontend
 FROM golang:1.24-alpine AS backend
 WORKDIR /src
@@ -195,6 +257,83 @@ touch go.sum
 
 This creates an empty file that satisfies Docker's COPY.
 
+### ⚠️ PITFALL: Docker COPY trailing slashes change behavior
+
+When copying a directory between Docker stages, trailing slashes on source and destination change what gets copied:
+
+```dockerfile
+# WRONG — copies the dist directory INTO ./dist, creating ./dist/dist/
+COPY --from=frontend /src/dist ./dist
+
+# RIGHT — copies the CONTENTS of dist/ INTO ./dist/
+COPY --from=frontend /src/dist/ ./dist/
+```
+
+- **No trailing slash on source:** copies the directory itself (e.g., `./dist/dist/`)
+- **Trailing slash on source:** copies the directory contents (e.g., `./dist/index.html`)
+
+This is especially dangerous when the destination directory already exists from a previous COPY — Docker merges, so the stub files remain alongside the real files buried one level deeper. The Go embed picks up the stub and the build succeeds silently with the wrong frontend. Always verify with `RUN ls -la dist/` after the COPY during debugging.
+
+### ⚠️ PITFALL: embed.FS.Open rejects leading slash
+
+`embed.FS.Open()` and `fs.Sub().Open()` reject paths with a leading `/` (per `fs.ValidPath`). But `r.URL.Path` always starts with `/`. A manual file-existence check **must** strip it:
+
+```go
+path := strings.TrimPrefix(r.URL.Path, "/")
+f, err := staticFS.Open(path)
+```
+
+`http.FileServer(http.FS(fsys))` handles this internally — `http.FS.Open` strips the `/`. So the pre-check needs the trim but the FileServer call does not.
+
+### Robust SPA handler (file-existence pattern)
+
+The `strings.Contains(r.URL.Path, ".")` shortcut (serve static if path has a dot, else SPA fallback) works for simple cases but fails when a JS file doesn't actually exist — the handler silently serves `index.html` with a `.js` content type, and the browser gets a white page with no error.
+
+A more robust pattern actually checks whether the file exists:
+
+```go
+func spaHandler(embedded embed.FS, root string) http.HandlerFunc {
+    staticFS, err := fs.Sub(embedded, root)
+    if err != nil {
+        log.Fatalf("spa: %v", err)
+    }
+
+    return func(w http.ResponseWriter, r *http.Request) {
+        path := strings.TrimPrefix(r.URL.Path, "/")
+
+        // Try to serve the exact file
+        f, err := staticFS.Open(path)
+        if err == nil {
+            defer f.Close()
+            stat, _ := f.Stat()
+            if !stat.IsDir() {
+                http.FileServer(http.FS(staticFS)).ServeHTTP(w, r)
+                return
+            }
+        }
+
+        // SPA fallback: serve index.html
+        index, err := fs.ReadFile(staticFS, "index.html")
+        if err != nil {
+            http.Error(w, "Not found", 404)
+            return
+        }
+
+        if ext := filepath.Ext(r.URL.Path); ext != "" {
+            w.Header().Set("Content-Type", contentType(ext))
+        }
+        w.Write(index)
+    }
+}
+```
+
+Key details:
+- `fs.Sub(embedded, root)` strips the `dist/` prefix so `http.FileServer` finds files at their URL paths
+- `r.URL.Path` → trim `/` → `staticFS.Open()` for the existence check
+- `http.FileServer(http.FS(staticFS))` handles content types and range requests
+- Fallback sets the correct Content-Type for any `.js`/`.css` files that land here (prevents MIME mismatch errors)
+- The `//go:embed dist` directive (without `all:`) skips hidden files — use `//go:embed all:dist` if you need them
+
 ## Vue: Focus Management with v-if
 
 When an input element is wrapped in `v-if`, it's removed from the DOM when the condition is false and re-created when true. Focus is lost on re-creation.
@@ -275,7 +414,138 @@ docker exec uptime-kuma sqlite3 /app/data/kuma.db \
 
 No restart needed — Uptime Kuma reads monitors from DB on each check cycle.
 
+## Hetzner Cloud Deployment
+
+When the project should NOT run on the homelab (e.g., a SaaS product), use Hetzner Cloud:
+
+### Provision VM
+
+```bash
+# Hetzner Cloud CX22: 2 vCPU, 4GB RAM, 40GB SSD, ~€4.25/mo
+# OS: Ubuntu 24.04 LTS, SSH key only
+# Firewall: allow 80, 443; allow 22 from your IP only
+```
+
+### DNS
+
+Point domain A record to Hetzner IP. Also add `www` → redirect to apex.
+
+### Install on VM
+
+```bash
+ssh root@<ip>
+apt-get update && apt-get install -y docker.io docker-compose-v2 unattended-upgrades
+```
+
+### Deploy
+
+Same Docker approach as homelab but without the homeserver compose file. Ship the project directly:
+
+```bash
+# From local:
+rsync -avz --exclude 'node_modules' --exclude 'frontend/dist' ./ root@<ip>:/opt/fmtthis/
+ssh root@<ip> "cd /opt/fmtthis && docker compose up -d --build"
+```
+
+Or use a standalone `docker-compose.yml` in the project root:
+
+```yaml
+services:
+  app:
+    build: .
+    image: project-name:local
+    container_name: project-name
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/home/app/data  # SQLite persistence
+```
+
+### Docker Compose env var interpolation
+
+When setting environment variables in `docker-compose.yml`, Docker Compose tries to substitute `${VAR}` patterns from the shell or `.env` file. Hardcoded placeholder values like `***` can trigger interpolation errors. **Use bare variable references** that pull from `.env`:
+
+```yaml
+# WRONG — Compose tries to interpolate
+environment:
+  - STRIPE_SECRET_KEY=sk_live_***
+# RIGHT — pulls from .env file, empty if unset
+environment:
+  - STRIPE_SECRET_KEY
+```
+
+The bare reference form (`VAR_NAME` without `=value`) tells Compose to look up the variable from the environment or `.env` file. If unset, the variable is empty — the app handles it gracefully (e.g., disables payments with a warning log).
+
+Install Caddy directly or run in Docker. If directly:
+
+```bash
+apt-get install -y caddy
+```
+
+`/etc/caddy/Caddyfile`:
+```caddy
+fmtthis.dev {
+    reverse_proxy localhost:8080
+}
+```
+
+### Monthly Costs
+
+| Item | Cost |
+|------|------|
+| Hetzner CX22 | ~€4.25 |
+| Domain (.dev) | ~$12/year |
+| **Total** | **~€5.50/mo** |
+
+Break-even is typically 2-5 paid users.
+
+### Tailwind v3 (alternative to v4)
+
+The default setup above uses Tailwind v4 (`@import "tailwindcss"`, no config file). Some projects use Tailwind v3 with explicit config files — especially when using a theme palette like Rose Pine that benefits from `tailwind.config.js`:
+
+```js
+// tailwind.config.js (v3)
+export default {
+  content: ["./index.html", "./src/**/*.{vue,js}"],
+  theme: {
+    extend: {
+      colors: {
+        base: '#191724',
+        surface: '#1f1d2e',
+        text: '#e0def4',
+        iris: '#c4a7e7',
+        // ... full Rose Pine palette
+      }
+    }
+  }
+}
+```
+
+```css
+/* style.css (v3) */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+```
+
+Install: `npm install -D tailwindcss@3 postcss autoprefixer` (no `@tailwindcss/vite`). Both v3 and v4 are valid — v3 is more explicit for custom themes, v4 is simpler for standard setups.
+
 ## Development Workflow
+
+**Primary (Docker-first — zero local deps, preferred):**
+
+```bash
+# Build and run everything in Docker — no Node, no Go, no npm required locally
+docker compose up -d --build
+
+# Open http://localhost:8080
+# Rebuild on changes: docker compose up -d --build
+```
+
+Use a simple `docker-compose.yml` without Caddy for local dev (just the app on `:8080`). Keep a separate `docker-compose.prod.yml` with Caddy for production.
+
+**Alternative (for rapid frontend iteration):**
 
 ```bash
 # Terminal 1: Go backend (rebuild on change)
@@ -286,3 +556,11 @@ cd project/frontend && npm run dev
 ```
 
 Vite proxies `/api` to `localhost:8080` in dev mode. Open `http://localhost:5173`.
+
+Prefer Docker-first for the build-test cycle — it's the same command for local and production and avoids environment-specific bugs.
+
+## References
+
+- `references/sqlite-stripe-patterns.md` — SQLite (modernc.org/sqlite, pure Go, WAL mode) + Stripe subscription checkout/webhook flow + API key generation for micro-SaaS backends.
+- `references/forgejo-repo-create.md` — Creating repos on Forgejo via API.
+- `references/domain-check.md` — Checking domain name availability with `dig +short NS` (no whois needed).

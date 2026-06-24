@@ -71,9 +71,11 @@ Present the combined findings concisely. Don't dump raw reports — extract the 
 
 - **Don't trust subagent summaries blindly.** If a subagent says "wrote file to /tmp/X", stat it. If it says "found product Y at €Z", spot-check.
 - **Subagents can't see memory.** Pass all user context (location, setup, preferences) explicitly in the `context` field.
-- **Web extraction may fail.** The ddgs backend doesn't always support content extraction. Subagents should cross-reference multiple search results for accuracy.
+- **web_extract FAILS with ddgs backend — it is search-only.** The ddgs backend returns error: `"DuckDuckGo (ddgs) is a search-only backend and cannot extract URL content."` for ALL web_extract calls. You cannot extract page content with ddgs. Either switch to firecrawl/tavily/exa in config, or rely on rich search snippets (they often contain enough detail for research tasks). Subagents inherit the same backend — they hit the same wall.
+- **delegate_task can be interrupted before subagents finish.** When the parent agent sends a batch of 3 subagents and the first is still running when the parent's turn ends, the subagent returns `status: interrupted` and the remaining subagents never start (error: "Parent agent interrupted — child did not finish in time"). Fallback: when this happens, do NOT retry delegation. Switch to direct `web_search` calls from the parent — they're faster and more reliable for the same research goal. Run 4-6 searches across categories, compile from snippets. You lose parallelism but reliably get results in one turn.
 - **Don't make subagents too broad.** "Research everything about topic X" produces shallow results. Split into focused sub-goals.
 - **Parallel tasks can't coordinate.** If task B needs results from task A, run them sequentially instead.
+- **Delegate tasks can time out or be interrupted.** When model latency is high or the parent agent is also making tool calls, subagents may return `status: interrupted` before completing. If the first subagent in a batch is interrupted and others never started, fall back to direct `web_search` calls — you'll get results faster and more reliably for time-sensitive research. Don't spend multiple turns retrying delegation when direct searches work.
 
 ## Support files
 
