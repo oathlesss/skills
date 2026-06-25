@@ -83,6 +83,6 @@ Runs hourly, finds Discord sessions inactive >2h, summarizes to ZenNotes inbox.
 
 **Tracking file:** `~/.hermes/cron/session-summarizer/processed.txt` (one session ID per line).
 
-**Notes output:** `/home/ruben/obsidian-vault/inbox/Session-YYYY-MM-DD-HH-MM.md` with frontmatter.
+**Notes output:** `/home/ruben/obsidian-vault/inbox/Session-YYYY-MM-DD-HH-MM-topic-slug.md` with frontmatter. The topic-slug is a 2-5 word hyphenated description derived from the session content (e.g. `wand-focus-audit`, `atm10-guide-research`). H1 heading follows the same pattern: `# Session-YYYY-MM-DD-HH-MM — Descriptive Title`.
 
 **Tools:** `["terminal", "file", "session_search"]` — minimal set for efficiency.

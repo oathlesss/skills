@@ -98,7 +98,11 @@ docker exec uptime-kuma sqlite3 /app/data/kuma.db \
   "SELECT id, name, hostname, port FROM monitor WHERE name LIKE '%MC%';"
 ```
 
-Monitor changes are picked up on the next check interval — no restart needed for field updates (only new INSERTs require a restart for Uptime Kuma to discover them).
+**⚠️ HOSTNAME CHANGES REQUIRE A RESTART.** Most field updates (name, description, interval, timeout) take effect immediately — no restart needed. But Uptime Kuma caches DNS resolution internally. Changing `hostname` in the DB will update the field, but the monitor keeps resolving the OLD hostname until Uptime Kuma is restarted. Symptom: heartbeats show `getaddrinfo ENOTFOUND <old-hostname>` while the DB shows the new hostname.
+
+**⚠️ CONTAINER RECREATE STALES DNS CACHE, TOO.** Docker assigns a new IP when a container is recreated (even with the same hostname). Uptime Kuma may cache the old IP and produce `connect EHOSTUNREACH <old-ip>:<port>` errors. Restart Uptime Kuma to flush the DNS cache. If heartbeats show successful UP records alongside stale DOWN records, delete the stale heartbeat rows (see \"Stale DOWN heartbeat\" pitfall below).
+
+**Summary:** For new INSERTs → always restart. For hostname changes → always restart. For container recreates → restart Uptime Kuma. For other field updates (name, interval, description) → no restart needed.
 
 ## Pitfalls
 

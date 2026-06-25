@@ -96,6 +96,8 @@ func (s *SPA) Serve(w http.ResponseWriter, r *http.Request) {
 
 **⚠️ PITFALL: `//go:embed` needs the `dist` directory at compile time.** Create a placeholder `dist/.gitkeep` so `go build` works before the frontend is built. During Docker build, copy the real `dist/` from the frontend stage into the Go build context.
 
+**Alternative: filesystem-based SPA serving.** If you prefer NOT to embed the frontend into the binary, serve dist/ from the filesystem at runtime. See `go-vue-fullstack` skill section "Filesystem-Based SPA Serving" for the multi-path handler pattern. **Critical pitfall:** when using filesystem SPA, you MUST copy `dist/` to the Docker runtime stage — the binary alone won't serve the frontend. Missing this gives a white page with no errors.
+
 **⚠️ PITFALL: `go.sum` may not exist if only stdlib imports are used.** `go mod tidy` doesn't create `go.sum` when there are no external deps. Touch an empty `go.sum` before Docker build, or the `COPY go.mod go.sum ./` step fails.
 
 ## Multi-Stage Dockerfile
@@ -255,3 +257,4 @@ Then reference via `style="color: var(--rp-iris)"` in components. This keeps the
 
 - `references/go-vue-terminal.md` — Full terminal website implementation: Vue 3 terminal component, Go command registry, Rose Pine theme details, keyboard handling patterns.
 - `references/webhook-deploy-pipeline.md` — Deploy script, webhook receiver, systemd service, and Forgejo config for auto-deploy pipelines with health check + rollback.
+- `references/spa-filesystem-handler.md` (in go-vue-fullstack skill) — Filesystem-based SPA handler alternative to embed, with multi-path support for Docker + local dev.

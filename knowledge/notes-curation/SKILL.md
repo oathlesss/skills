@@ -82,7 +82,7 @@ Never delete content. Move obsolete notes to trash/ with a comment explaining wh
 The Nightly Notes Curator cron job (`2e164fee3899`) currently has a self-contained prompt with all rules inline. If you update rules here in the skill, you MUST also update the cron job's prompt — otherwise they drift apart. Long-term fix: switch the cron job to `skills: ["notes-curation"]` with a short prompt that just references this skill.
 
 ### Session-summarizer notes are not authoritative
-The Session Summarizer cronjob (`7852c13dd74b`) auto-generates `Session-YYYY-MM-DD-HH-MM.md` notes in inbox/. These are LLM-written summaries with no verification step — they can fabricate conclusions, claim tasks were completed that weren't, or misattribute decisions. **Always cross-reference these against actual system state** (cronjob list, git log, filesystem) before treating their claims as fact. They are useful pointers, not ground truth.
+The Session Summarizer cronjob (`7852c13dd74b`) auto-generates `Session-YYYY-MM-DD-HH-MM-topic-slug.md` notes in inbox/. These are LLM-written summaries with no verification step — they can fabricate conclusions, claim tasks were completed that weren't, or misattribute decisions. **Always cross-reference these against actual system state** (cronjob list, git log, filesystem) before treating their claims as fact. They are useful pointers, not ground truth.
 
 ## Active Notes (keep in inbox/)
 

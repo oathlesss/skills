@@ -18,6 +18,7 @@ triggers:
   - Setting up or modifying Uptime Kuma monitors, status pages, or notifications
   - Uptime Kuma API exploration, database inspection, or programmatic monitor creation
   - Hardware inspection, storage capacity analysis, or upgrade planning for the homeserver machine
+  - Storage audit or cleanup — "what's taking up space", "free up disk space", "clean up Docker"
   - Managing Docker Compose secrets — encrypting .env files, SOPS + age, per-service isolation, migrating from monolithic .env
 ---
 
@@ -257,6 +258,36 @@ When verifying a Docker Compose service is working, follow this sequence:
 
 **Pattern:** CouchDB in `docker-compose.yml` only exposes 5984 on the internal Docker network, not to the host. `curl localhost:5984` will fail. Always go through the reverse proxy (`https://db.oathless.dev`).
 
+## Homelab Audit
+
+When the user asks to audit the homelab ("check what's running", "anything missing?"), cross-reference four sources of truth:
+
+1. **`docker compose ps`** — what containers are actually running?
+2. **Caddyfile** (`docker exec caddy cat /etc/caddy/Caddyfile`) — what domains are proxied?
+3. **Homepage `services.yaml`** — what's listed on the dashboard?
+4. **Uptime Kuma monitors** (`docker exec uptime-kuma sqlite3 /app/data/kuma.db "SELECT id, name, type, url, hostname, port, active FROM monitor ORDER BY id;"`) — what's being monitored?
+
+**Checklist (go through every item):**
+
+| Source A | Source B | Question |
+|---|---|---|
+| docker ps | Caddyfile | Every web-facing service has a Caddy entry? Infrastructure services (Tailscale, mc-router, Minecraft) don't need one. |
+| docker ps | Homepage | Every web-facing service appears on the dashboard? (Exception: infrastructure-only containers.) |
+| docker ps | Uptime Kuma | Every web-facing service has a monitor? Use HTTP for Caddy-proxied services, TCP port for internal-only. |
+| Caddyfile | Uptime Kuma | Any Caddy-proxied domain missing a monitor? |
+| Uptime Kuma | Caddyfile | Any monitor targeting a domain NOT in the Caddyfile? (Stale/ghost monitors for removed services.) |
+| Uptime Kuma | Uptime Kuma | Any duplicate monitors? (Same URL, same type.) |
+
+**Common findings and fixes:**
+
+- **Missing Homepage entry:** Patch `homepage/services.yaml`, then `docker compose restart homepage`
+- **Missing Uptime Kuma monitor:** Insert via `docker exec uptime-kuma sqlite3` — no restart needed
+- **Stale/ghost monitor:** `DELETE FROM monitor WHERE id=N;`
+- **Duplicate monitor:** `DELETE FROM monitor WHERE id=<higher-id>;`
+- **Missing Caddy entry:** Add to `caddy/Caddyfile`, then `docker compose restart caddy`
+
+**⚠️ Homepage restart required after YAML changes.** Homepage reads config at startup — `docker compose restart homepage` is mandatory. Uptime Kuma reads monitors from the DB on each check cycle, so most field updates take effect immediately — no restart. **Exceptions:** new INSERTs (monitors loaded at startup), hostname changes (DNS cache), and after container recreates (IP change) — restart Uptime Kuma for these.
+
 ## CouchDB for Obsidian Sync
 
 > **Note:** This configuration is historical — the user may not be actively self-hosting Obsidian sync anymore. CouchDB may still be running for other purposes. Check the current state before assuming this is active.
@@ -479,7 +510,7 @@ When adding a service to the homelab, always do all three:
 
 **Monitor insertion pattern (HTTP):**
 ```bash
-**Monitor insertion pattern (HTTP, via docker exec):** Use `docker exec uptime-kuma sqlite3` to write monitors — the host DB is root-owned and locked by the running process, so `python3 -c "import sqlite3; ..."` from the host fails with `OperationalError: attempt to write a readonly database`. Writing inside the container works reliably:\n\n```bash\n# HTTP monitor (public-facing URL check)\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"INSERT INTO monitor (name, active, user_id, interval, url, type, weight, created_date, maxretries, ignore_tls, upside_down, maxredirects, accepted_statuscodes_json, retry_interval, method, timeout, description) VALUES ('Service Name', 1, 1, 60, 'https://sub.oathless.dev', 'http', 2000, datetime('now'), 3, 0, 0, 10, '[\\\"200\\\"]', 60, 'GET', 48, 'Optional description');\"\n\n# TCP port monitor (internal Docker network check)\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"INSERT INTO monitor (name, active, user_id, interval, type, weight, hostname, port, created_date, maxretries, ignore_tls, upside_down, maxredirects, accepted_statuscodes_json, retry_interval, method, expiry_notification, timeout, gamedig_given_port_only, description) VALUES ('Service TCP', 1, 1, 120, 'port', 2000, 'container-name', 25565, datetime('now'), 3, 0, 0, 10, '[\\\"200-299\\\"]', 120, 'GET', 1, 48.0, 1, 'Optional description');\"\n\n# Update existing monitor\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"UPDATE monitor SET name='New Name', hostname='new-host', port=25567, description='Updated' WHERE id=3;\"\n```\n\n**No restart needed.** Uptime Kuma reads monitors from the DB on each check cycle — inserts and updates take effect immediately. To verify:\n\n```bash\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \"SELECT id, name, hostname, port, active FROM monitor WHERE name LIKE '%search%';\"\n```
+**Monitor insertion pattern (HTTP, via docker exec):** Use `docker exec uptime-kuma sqlite3` to write monitors — the host DB is root-owned and locked by the running process, so `python3 -c "import sqlite3; ..."` from the host fails with `OperationalError: attempt to write a readonly database`. Writing inside the container works reliably:\n\n```bash\n# HTTP monitor (public-facing URL check)\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"INSERT INTO monitor (name, active, user_id, interval, url, type, weight, created_date, maxretries, ignore_tls, upside_down, maxredirects, accepted_statuscodes_json, retry_interval, method, timeout, description) VALUES ('Service Name', 1, 1, 60, 'https://sub.oathless.dev', 'http', 2000, datetime('now'), 3, 0, 0, 10, '[\\\"200\\\"]', 60, 'GET', 48, 'Optional description');\"\n\n# TCP port monitor (internal Docker network check)\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"INSERT INTO monitor (name, active, user_id, interval, type, weight, hostname, port, created_date, maxretries, ignore_tls, upside_down, maxredirects, accepted_statuscodes_json, retry_interval, method, expiry_notification, timeout, gamedig_given_port_only, description) VALUES ('Service TCP', 1, 1, 120, 'port', 2000, 'container-name', 25565, datetime('now'), 3, 0, 0, 10, '[\\\"200-299\\\"]', 120, 'GET', 1, 48.0, 1, 'Optional description');\"\n\n# Update existing monitor\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \\\n  \"UPDATE monitor SET name='New Name', hostname='new-host', port=25567, description='Updated' WHERE id=3;\"\n```\n\n**No restart needed.** Uptime Kuma reads monitors from the DB on each check cycle — most field updates (name, interval, description) take effect immediately. **⚠️ EXCEPTIONS requiring restart:** new INSERTs (monitors loaded at startup only), hostname changes (DNS resolution cached), and container recreates (new IP, same hostname — DNS cache stale).\n\n```bash\ndocker exec uptime-kuma sqlite3 /app/data/kuma.db \"SELECT id, name, hostname, port, active FROM monitor WHERE name LIKE '%search%';\"\n```
 docker compose restart uptime-kuma
 ```
 
@@ -514,18 +545,29 @@ When removing a service from the stack, follow this sequence:
 
 3. **Remove any reverse proxy entries** from `caddy/Caddyfile` if the service was proxied.
 
-4. **Reload Caddy** to apply the proxy config change:
+4. **Restart Caddy** to apply the proxy config change. Use `restart`, not `reload` — bind mounts can cache and `reload` may report "config is unchanged" (see Caddy: Bind Mount Caching Pitfall below):
    ```bash
-   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+   docker compose restart caddy
    ```
 
-5. **Remove the data directory.** Docker containers often write files as internal users (e.g. CouchDB's uid 5984, Minecraft's uid 1000), making them root-owned on the host:
+5. **Remove any Uptime Kuma monitors** for this service. List monitors, then delete by ID:
    ```bash
-   sudo rm -rf ./<service-data-dir>
+   docker exec uptime-kuma sqlite3 /app/data/kuma.db "SELECT id, name, type, url, hostname, port FROM monitor WHERE name LIKE '%<service>%' OR url LIKE '%<subdomain>%';"
+   docker exec uptime-kuma sqlite3 /app/data/kuma.db "DELETE FROM monitor WHERE id=N;"
    ```
-   If the agent lacks sudo, tell the user to run this step themselves.
+   No restart needed for DELETEs of existing monitors — Uptime Kuma picks up removals on the next check cycle.
 
-6. **Verify:** `docker compose ps` should show no trace of the removed service.
+6. **Remove any Homepage entries** from `homepage/services.yaml` if the service was listed on the dashboard. Restart Homepage after editing:
+   ```bash
+   docker compose restart homepage
+   ```
+
+7. **Remove the data directory.** Docker containers often write files as internal users (e.g. CouchDB's uid 5984, Minecraft's uid 1000), making them root-owned on the host. Use the Alpine container workaround (see Root-Owned Docker Directories above) when sudo isn't available:
+   ```bash
+   docker run --rm -v /home/ruben/homeserver:/host alpine:latest sh -c "rm -rf /host/<service-data-dir>"
+   ```
+
+8. **Verify:** `docker compose ps` should show no trace of the removed service, and `docker exec uptime-kuma sqlite3 /app/data/kuma.db "SELECT id, name FROM monitor WHERE name LIKE '%<service>%';"` should return nothing.
 
 ## Caddy: Bind Mount Caching Pitfall
 
@@ -672,6 +714,8 @@ metrics.oathless.dev {
 Netdata has **no built-in auth** — always protect it with `basic_auth` (same hash as Homepage/Dozzle). Netdata exposes its dashboard on port 19999. Route it through Caddy (no direct port mapping) for automatic HTTPS.
 
 **Uptime Kuma:** Use a **TCP port monitor** targeting `netdata:19999` (internal Docker network). Don't use an HTTP monitor against the Caddy-proxied URL — `basic_auth` returns 401, which looks like a failure. The TCP check verifies the service itself is listening, bypassing auth.
+
+**⚠️ PITFALL: Netdata icon may not exist in dashboard-icons CDN.** Homepage fetches icons from `cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/` at runtime. If `netdata.png` doesn't render, fall back to an MDI icon: `mdi-monitor-dashboard`. Netdata is now listed on the dashboard as "Metrics" with Docker status monitoring.
 
 ## Uptime Kuma: Push Monitors + Hermes Cron
 
@@ -837,6 +881,78 @@ After creating these cronjobs, always:
    Status 1=UP, 0=DOWN. Should show UP with current usage % within seconds.
 2. **Run the backup script once** to confirm it works and the directory is writable
 3. **Note the first backup** will run at the next 4am — no immediate verification needed
+
+## Storage Audit and Cleanup (On-Demand)
+
+When the user asks what's consuming disk space or wants to free up storage, follow this workflow:
+
+### 1. Top-Level Survey
+
+```bash
+df -h /                          # overall usage
+sudo du -h --max-depth=1 / | sort -rh | head -20   # largest top-level dirs (may timeout)
+du -sh /home /var /usr /opt /tmp 2>/dev/null        # common suspects
+docker system df                                      # Docker waste overview
+```
+
+### 2. Dig Into Large Directories
+
+```bash
+du -sh /home/ruben/*/ 2>/dev/null | sort -rh | head -15    # user home projects
+du -sh /home/ruben/.[!.]* 2>/dev/null | sort -rh | head -10 # dotfiles (.gradle, .cache, etc.)
+docker system df -v                                         # per-image breakdown
+```
+
+Common large consumers:
+- **Docker images** (19+ GB possible, mostly unused tags)
+- **Docker build cache** (6-7 GB from multi-stage builds)
+- **Deprecated service data dirs** (Crafty: ~1.2G in `import/`)
+- **Minecraft worlds** (1-2 GB each)
+- **.gradle** (1.5G from mod builds)
+- **.cache** (go-build, uv, npm — 300-500 MB combined)
+
+### 3. Identify Reclaimable Items
+
+Look for:
+- **Deprecated services** still on disk — check memory for what's been decommissioned
+- **Unused Docker images** — old Java version tags (java17/java21 when only java25 is active), build-stage images (fmtthis-gobuild), services no longer in compose (Crafty, CouchDB)
+- **Docker build cache** — `docker builder prune -af` typically frees 6-7 GB
+- **Unused Minecraft images** — only the java version tag in active use is needed; pin per-server in compose
+
+### 4. Cleanup Sequence
+
+1. **Remove unused Docker images first** (largest win, no data loss):
+   ```bash
+   # Remove specific unused images
+   docker rmi registry.gitlab.com/crafty-controller/crafty-4:latest \
+              couchdb:3 \
+              itzg/minecraft-server:java17 \
+              itzg/minecraft-server:java21 \
+              itzg/minecraft-server:latest \
+              fmtthis-gobuild:latest \
+              # ... any other unused images
+   docker image prune -f    # dangling leftovers
+   ```
+
+2. **Prune build cache:**
+   ```bash
+   docker builder prune -af
+   ```
+
+3. **Remove deprecated data directories:**
+   ```bash
+   # Verify not in docker-compose.yml first (grep), then:
+   rm -rf /home/ruben/homeserver/<deprecated-service>/
+   ```
+
+4. **Final check:**
+   ```bash
+   df -h / && docker system df
+   ```
+
+**⚠️ PITFALL: Don't remove images referenced by running containers.** Check `docker compose ps` first to confirm what's active. Docker will refuse to remove images with active containers, but the error is noisy.
+
+**⚠️ PITFALL: `docker system df` reclaimable numbers can be misleading.** The "RECLAIMABLE" column often shows shared base layers as reclaimable even when they're referenced by active images. The ground truth is `df -h` — always verify with filesystem-level usage after cleanup.
 
 ## Uptime Kuma Monitoring
 
@@ -1388,14 +1504,64 @@ homepage:
 docker run --rm -v /home/ruben/homeserver/homepage:/data alpine:latest chown -R 1000:1000 /data
 ```
 
+**⚠️ PITFALL: Don't assume which service a subdomain points to.** `home.oathless.dev` is the Homepage dashboard, not the terminal website (that's `oathless.dev`). When asked about a specific subdomain, always check `caddy/Caddyfile` first — the `reverse_proxy` directive reveals the backing Docker service name. Don't guess from naming similarity.
+
 **Config files** live in `./homepage/`:
-- `settings.yaml` — title, theme, layout
-- `services.yaml` — service links grouped by category (groups are supported here)
-- `widgets.yaml` — system resources, docker stats, search
+- `settings.yaml` — title, theme, layout, cardBlur (sm/md/lg/xl for frosted glass), hideVersion
+- `services.yaml` — service links grouped by category. Add `server: my-docker` + `container: <container_name>` to show live Docker status dots (green=running, red=stopped)
+- `widgets.yaml` — flat list: resources, search, openmeteo weather (free, lat/long/units/cache), datetime, custom API
 - `bookmarks.yaml` — quick links
-- `docker.yaml` — socket-based auto-discovery
+- `docker.yaml` — socket-based auto-discovery (referenced by `server:` in services.yaml)
+- `custom.css` — full CSS override. Use `[class*="..."]` selectors to avoid Tailwind version lock-in
+- `custom.js` — JS injection for custom widgets/behavior
 
 Restart after config changes: `docker compose restart homepage`
+
+**⚠️ PITFALL: CSS class targeting — Homepage uses specific Tailwind classes, not generic ones.** Custom CSS that targets classes like `[class*="bg-gray-800"]` or `[class*="bg-theme-800"]` will NOT match. Homepage's actual classes in dark mode:
+- Service tiles: `.service-card` with `dark:bg-white/5` (5% white overlay, not a solid color)
+- Bookmark links: `.bookmark a` with `dark:bg-white/5` + `dark:hover:bg-white/10`
+- Info widgets (weather, resources, search): `.widget-container` with `dark:bg-white/5`
+- Group headers: `.bookmark-group-name` and `<h2>` with `dark:text-theme-300`
+- Page body: no fixed class — override `body` directly with `!important`
+- Links: `dark a` (colored with `dark:text-theme-200`)
+- Search input: `dark input` with no distinct class
+
+**Investigation method:** Don't guess at classes. Read the Homepage source at `github.com/gethomepage/homepage/blob/dev/src/components/` — the JSX files reveal the exact `className` strings. Key files: `services/item.jsx`, `bookmarks/item.jsx`, `widgets/widget/container.jsx`, `pages/index.jsx`. The `dark:` prefix variants are Tailwind's dark mode classes applied at runtime — the JSX only shows the dark variant, not two separate class sets.
+
+**Working Rose Pine custom.css** (also in `references/homepage-custom-css.md`):
+```css
+/* ⚠️ Background: target html + wrappers, NOT body alone — JS clears body styles */
+html.dark, html.dark body, #page_wrapper, #inner_wrapper {
+  background: linear-gradient(135deg, #191724 0%, #1f1d2e 40%, #191724 100%) !important;
+  background-attachment: fixed !important;
+}
+/* Cards — target by actual component classes */
+.dark .service-card,
+.dark .bookmark a,
+.dark .widget-container {
+  background-color: #1f1d2e !important;
+  border: 1px solid #26233a !important;
+  color: #e0def4 !important;
+}
+.dark .service-card:hover,
+.dark .bookmark a:hover,
+.dark .widget-container:hover {
+  background-color: #26233a !important;
+  border-color: #6e6a86 !important;
+}
+/* Group headers */
+.dark .bookmark-group-name, .dark h2 { color: #c4a7e7 !important; }
+/* Page background */
+body { background: linear-gradient(135deg, #191724 0%, #1f1d2e 40%, #191724 100%) !important; background-attachment: fixed !important; }
+/* Links */
+.dark a { color: #9ccfd8 !important; } .dark a:hover { color: #ebbcba !important; }
+/* Search */
+.dark input { background-color: #26233a !important; color: #e0def4 !important; border-color: #6e6a86 !important; }
+.dark input::placeholder { color: #6e6a86 !important; }
+/* Status dots */
+.dark .text-green-500, .dark .text-green-400 { color: #31748f !important; }
+.dark .text-red-500, .dark .text-red-400 { color: #eb6f92 !important; }
+```
 
 **⚠️ PITFALL: Widgets use a flat YAML list, not grouped sections.** Unlike `services.yaml` (which supports groups like `- Infrastructure:` → `- Caddy:`), `widgets.yaml` is a flat list of widget objects. Grouping widgets under named sections produces "Missing" errors for every widget in the group.
 

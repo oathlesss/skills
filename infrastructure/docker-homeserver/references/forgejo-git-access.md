@@ -33,6 +33,18 @@ forgejo:
 
 Restart: `docker compose up -d forgejo`
 
+**Verify the port is listening after restart:**
+
+```bash
+# Should show port 2222 bound to all interfaces
+ss -tlnp | grep 2222
+# → LISTEN 0.0.0.0:2222
+
+# Docker should show the mapping
+docker ps --format "table {{.Names}}\t{{.Ports}}" | grep forgejo
+# → forgejo  3000/tcp, 0.0.0.0:2222->22/tcp, [::]:2222->22/tcp
+```
+
 ### 2. Generate SSH key on the pushing machine
 
 ```bash
@@ -59,6 +71,8 @@ Host git.oathless.dev
 ssh -T git@git.oathless.dev
 # → "Hi there, username! You've successfully authenticated..."
 ```
+
+**⚠️ PITFALL: Router port forwarding for external clients.** The port mapping (`2222:22`) in docker-compose makes the port available on the host machine only. When cloning or pushing from a device outside the local network (e.g. a laptop via the internet, even over Tailscale), the router must forward port 2222 to the homelab's LAN IP. If the router doesn't forward 2222, external SSH connections will time out — the port is listening on the host but unreachable from the WAN or tailnet. Use the same router port-forwarding mechanism as Minecraft (25565) — just forward port 2222 to the same internal IP.
 
 ### 6. Use SSH remote
 

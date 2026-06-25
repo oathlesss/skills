@@ -20,7 +20,19 @@ Monorepo pattern for a Go backend + Vue 3 frontend deployed as a **single Docker
 1. Create a `PLAN.md` first — architecture, tech choices, deployment, monetization strategy
 2. Scaffold: `mkdir -p project/{backend/{handlers,db,auth},frontend/src/{components,lib,assets},scripts}`
 3. `git init && git branch -m main`
-4. Create the repo on Forgejo (see `references/forgejo-repo-create.md`) and push
+4. Create the repo on Forgejo via the API (`references/forgejo-repo-create.md`), then push. Push-to-create is disabled on this instance — you MUST create the repo BEFORE pushing.
+5. **⚠️ MANDATORY: Verify repo is private.** Although the API create call sets `"private":true`, verify anyway:
+
+```bash
+TOKEN=$(printf "protocol=https\nhost=git.oathless.dev\n" | git credential fill 2>/dev/null | grep password | cut -d= -f2)
+VIS=$(curl -sf -H "Authorization: token $TOKEN" "https://git.oathless.dev/api/v1/repos/oathless/<repo>" | jq -r .private)
+if [ "$VIS" != "true" ]; then
+  curl -sf -X PATCH -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+    -d '{"private":true}' "https://git.oathless.dev/api/v1/repos/oathless/<repo>"
+fi
+```
+
+If the token-redaction pitfall (see `references/forgejo-repo-create.md`) blocks multi-call patterns, chain extract+verify+flip in a single `terminal()` invocation.
 
 ## Project Structure
 
@@ -138,6 +150,31 @@ The `//go:embed all:dist` directive reads from a `dist/` directory relative to t
 
 In the Dockerfile, copy the Vue build output there before the Go build. See the pitfall above about COPY trailing slashes.
 
+### Database: jmoiron/sqlx (default)
+
+For any project needing a database, use `jmoiron/sqlx` with `modernc.org/sqlite` as the driver (pure Go, no CGO). sqlx provides `StructScan`, named parameters, and `In()` expansion — cleaner than raw `database/sql`.
+
+```go
+import (
+    "github.com/jmoiron/sqlx"
+    _ "modernc.org/sqlite"
+)
+
+db, err := sqlx.Open("sqlite", "./data/app.db?_journal_mode=WAL")
+```
+
+**go.mod setup (minimal):**
+```
+module github.com/oathless/project
+go 1.24
+require (
+    github.com/jmoiron/sqlx v1.4.0
+    modernc.org/sqlite v1.34.0
+)
+```
+
+Then `go mod tidy` to resolve indirect deps. Reuse a known-good `go.sum` from a sibling project (e.g., `github.com/oathless/fmtthis`) to avoid version-resolution churn.
+
 ### API handler pattern
 
 ```go
@@ -159,6 +196,53 @@ mux.HandleFunc("POST /api/command", api.HandleCommand)
 spa := handler.NewSPA()
 mux.HandleFunc("/", spa.Serve)
 ```
+
+## Go: Filesystem-Based SPA Serving (Alternative to Embed)
+
+Full code and Dockerfile requirements in `references/spa-filesystem-handler.md`.
+
+When `embed.go` is overkill (e.g., a simple project where the binary reads dist/ from disk at runtime), use a filesystem-based SPA handler instead. The handler tries multiple paths so it works both locally and in Docker:
+
+```go
+type spaHandler struct {
+    roots []string
+}
+
+func (s *spaHandler) findRoot() string {
+    for _, root := range s.roots {
+        if info, err := os.Stat(root); err == nil && info.IsDir() {
+            return root
+        }
+    }
+    return s.roots[0]
+}
+
+func (s *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    root := s.findRoot()
+    fs := http.FileServer(http.Dir(root))
+    path := root + r.URL.Path
+    if _, err := os.Stat(path); err == nil {
+        fs.ServeHTTP(w, r)
+        return
+    }
+    http.ServeFile(w, r, root+"/index.html")
+}
+
+// Wire up: spaHandler{roots: []string{"dist", "../frontend/dist"}}
+```
+
+**⚠️ PITFALL: When using filesystem SPA (not embed), the Dockerfile MUST copy dist/ to the runtime stage.** Embed bundles dist into the binary at compile time; filesystem SPA reads it from disk at runtime. If you only copy the binary but not dist/, the frontend serves a blank white page with no errors:
+
+```dockerfile
+# WRONG — only copies binary, dist/ is missing at runtime
+COPY --from=backend-builder /myapp /app/myapp
+
+# RIGHT — copy both the binary AND the dist directory
+COPY --from=backend-builder /myapp /app/myapp
+COPY --from=backend-builder /src/dist/ /app/dist/
+```
+
+The Go build stage has dist/ from `COPY --from=frontend-builder /src/frontend/dist/ ./dist/`. You need ANOTHER copy in the runtime stage. Without it, the multi-path handler finds nothing and `http.FileServer` returns empty responses.
 
 ## Docker: Multi-Stage Build
 
@@ -247,15 +331,53 @@ go version
 
 Prepend `export PATH="$HOME/.local/go/bin:$PATH"` to any `go` command.
 
-### ⚠️ PITFALL: go.sum missing with zero dependencies
+### ⚠️ PITFALL: go.sum missing or stale
 
-If the Go module has no external dependencies (only stdlib), `go mod tidy` won't create a `go.sum`. The Dockerfile's `COPY go.mod go.sum ./` will fail. Fix:
+Two failure modes for the `COPY go.mod go.sum ./` step in the Dockerfile:
 
-```bash
-touch go.sum
+**A) Zero dependencies (stdlib only):** `go mod tidy` won't create a `go.sum`. Fix with `touch go.sum` to create an empty file that satisfies Docker's COPY.
+
+**B) Newly added dependencies, no `go mod tidy` run yet:** `go.sum` exists but lacks entries for new deps. The `go mod download` step in Docker fails with `missing go.sum entry for module providing package <pkg>`. Fix: run `go mod tidy` on the host before `docker compose build`. The Docker build cannot generate `go.sum` — it must exist and be complete at `COPY` time.
+
+Rule: after any `go get` or `go.mod` edit, run `go mod tidy` before building.
+
+### ⚠️ PITFALL: Bind mount permissions for non-root containers (SQLite data)
+
+When the Dockerfile uses `USER app` (non-root) and docker-compose bind-mounts a SQLite data directory, the mount inherits the host directory's ownership. If the host dir is owned by `root` (e.g., created by Docker Compose itself) and the container runs as `app` (uid 1000), the SQLite driver fails on first write:
+
+```
+unable to open database file: out of memory (14)
 ```
 
-This creates an empty file that satisfies Docker's COPY.
+The `(14)` is SQLite error code `SQLITE_CANTOPEN` — a permission denied disguised as an OOM message.
+
+**Fix — two approaches:**
+
+**A) docker-compose `user:` directive (recommended for homelab):**
+Remove `USER app` from the Dockerfile (keep the `adduser -D` line for home-dir setup). Set `user: "1000:1000"` in docker-compose to match the host user's UID. Pre-create the data directory with the host user's ownership:
+
+```bash
+mkdir -p data && chown ruben:ruben data   # or: chown 1000:1000 data
+```
+
+```yaml
+# docker-compose.yml
+services:
+  app:
+    user: "1000:1000"
+    volumes:
+      - ./data:/home/app/data
+```
+
+**B) Dockerfile chown before USER switch (for Hetzner/non-homelab):**
+Create and chown the data dir as root, then switch to the app user. This works when no bind mount is used (Docker volume instead) — the volume inherits the permissions from the image layer:
+
+```dockerfile
+RUN adduser -D -h /home/app app && mkdir -p /home/app/data && chown app:app /home/app/data
+USER app
+```
+
+Use approach A when bind-mounting a host directory that must persist across rebuilds. Use approach B for named Docker volumes or when the data dir is self-contained in the image.
 
 ### ⚠️ PITFALL: Docker COPY trailing slashes change behavior
 
@@ -273,6 +395,92 @@ COPY --from=frontend /src/dist/ ./dist/
 - **Trailing slash on source:** copies the directory contents (e.g., `./dist/index.html`)
 
 This is especially dangerous when the destination directory already exists from a previous COPY — Docker merges, so the stub files remain alongside the real files buried one level deeper. The Go embed picks up the stub and the build succeeds silently with the wrong frontend. Always verify with `RUN ls -la dist/` after the COPY during debugging.
+
+### ⚠️ PITFALL: go:embed fails on empty dist/ during local builds
+
+`//go:embed all:dist` requires the `dist/` directory to contain at least one file. The Dockerfile copies the Vue build output there before the Go stage, but a bare `go build ./cmd/server/` on the host fails with:
+
+```
+pattern all:dist: no matching files found
+```
+
+**Fix:** Create a stub `internal/handler/dist/index.html` so local builds work:
+
+```bash
+mkdir -p internal/handler/dist
+echo '<!DOCTYPE html><html><body>SPA stub</body></html>' > internal/handler/dist/index.html
+```
+
+This gets overwritten by the real build output during Docker builds (via `COPY --from=frontend /src/dist/ internal/handler/dist/`). The stub exists only so `go build` doesn't reject the embed directive. Add `internal/handler/dist/` to `.gitignore` to avoid committing stale stubs after a real frontend build.
+
+### ⚠️ PITFALL: SQLite + bind-mount permission error ("out of memory (14)")
+
+When using `modernc.org/sqlite` with a bind-mounted data directory, Docker Compose creates the host directory as `root:root`. If the container runs as a non-root user (via `USER app` in Dockerfile), SQLite can't write to the data dir and fails with `unable to open database file: out of memory (14)` — a misleading error. The DB path is fine; it's a permission issue.
+
+**Fix — two changes:**
+
+1. **Dockerfile:** chown the data dir while still root, then drop privileges:
+```dockerfile
+RUN adduser -D -h /home/app app && mkdir -p /home/app/data && chown app:app /home/app/data
+# Remove USER app — let docker-compose set the UID
+```
+
+2. **docker-compose.yml:** set `user: "1000:1000"` to match the host user's UID so bind-mount permissions align:
+```yaml
+services:
+  app:
+    user: "1000:1000"
+    volumes:
+      - ./data:/home/app/data
+```
+
+Pre-create the host data dir with the same ownership: `mkdir -p data && chown 1000:1000 data`.
+
+Alternative: use a Docker named volume (`volumes: - app_data:/home/app/data` + `volumes: app_data:` at bottom), which Docker manages permissions for automatically. But bind mounts are simpler for backups and local dev.
+
+### ⚠️ PITFALL: go.mod indirect dependency version errors
+
+When using `modernc.org/sqlite` (or any module with many indirect deps), copying a `go.mod` from another project can introduce version mismatches. A dependency like `github.com/mattn/go-isatty v0.20.0` may not exist — the correct version for the resolution path may be `v0.0.20` or the dep may not be needed at all.
+
+**Symptoms:**
+```
+go: downloading github.com/mattn/go-isatty v0.20.0
+... reading go.mod at revision v0.20.0: unknown revision v0.20.0
+```
+
+**Fix — start minimal and let `go mod tidy` resolve everything:**
+
+```bash
+# Delete the broken go.mod and go.sum, write a minimal version
+rm go.mod go.sum
+
+cat > go.mod << 'EOF'
+module github.com/oathless/project
+
+go 1.24
+
+require modernc.org/sqlite v1.34.0
+EOF
+
+go mod tidy   # resolves all indirect deps correctly
+```
+
+The minimal `go.mod` has only `module`, `go`, and `require` for direct deps. `go mod tidy` downloads and pins all transitive dependencies at working versions. Only after `go mod tidy` succeeds should you commit `go.sum`.
+
+**Better approach — reuse a known-good go.sum from a sibling project:**
+If you have another Go 1.24 project using the same direct deps (e.g., `github.com/oathless/fmtthis`), copy its `go.sum` instead of rebuilding from scratch. The versions are pinned and known to resolve.
+
+### ⚠️ PITFALL: Don't scaffold without explicit project selection
+
+When presenting project ideas (e.g., from an idea list), do NOT autonomously pick one and start building. Wait for the user to say which specific project to build. "Create" or "build something" is not enough — get the project name/number confirmed first. The user decides what gets built; present options, then wait.
+
+### ⚠️ PITFALL: Cross-reference existing projects before suggesting ideas
+
+Check the user's existing projects before presenting build ideas. Don't suggest building something that already exists (e.g., fmtthis.dev already covers JSON/YAML/TOML formatting). Check `/home/ruben/` for existing project directories and cross-reference with any idea lists.
+
+### ⚠️ PITFALL: Don't jump to deployment before the product is ready
+
+Build and verify the product first. Don't ask the user about hosting, domains, DNS, or deployment until the product is tested and working locally. The user handles hosting on their own schedule. Adding Caddy entries or Hetzner provisioning when the user just wants code is premature.
 
 ### ⚠️ PITFALL: embed.FS.Open rejects leading slash
 
@@ -333,6 +541,10 @@ Key details:
 - `http.FileServer(http.FS(staticFS))` handles content types and range requests
 - Fallback sets the correct Content-Type for any `.js`/`.css` files that land here (prevents MIME mismatch errors)
 - The `//go:embed dist` directive (without `all:`) skips hidden files — use `//go:embed all:dist` if you need them
+
+## Vue: Text Highlight Overlay
+
+For regex playgrounds, code editors, or any UI that highlights spans inside a `<textarea>`: stack a read-only highlight `<div>` behind a transparent `<textarea>`. See `references/vue-text-highlight-overlay.md` for the full pattern, pitfalls, and when to use CodeMirror instead.
 
 ## Vue: Focus Management with v-if
 
@@ -564,3 +776,4 @@ Prefer Docker-first for the build-test cycle — it's the same command for local
 - `references/sqlite-stripe-patterns.md` — SQLite (modernc.org/sqlite, pure Go, WAL mode) + Stripe subscription checkout/webhook flow + API key generation for micro-SaaS backends.
 - `references/forgejo-repo-create.md` — Creating repos on Forgejo via API.
 - `references/domain-check.md` — Checking domain name availability with `dig +short NS` (no whois needed).
+- `references/vue-text-highlight-overlay.md` — Regex/match highlighting in a `<textarea>` via stacked transparent layers.

@@ -31,6 +31,48 @@ Key pragmas in DSN:
 - `_busy_timeout=5000` — wait 5s on lock contention instead of failing
 - `_foreign_keys=on` — enforce FK constraints (off by default in SQLite)
 
+### ⚠️ PITFALL: Transaction deadlock with MaxOpenConns(1)
+
+`SetMaxOpenConns(1)` means only one connection exists. When you start a transaction with `db.Begin()`, that one connection is held by `tx`. **Any call to another DB function that uses `*sql.DB` (not the `*sql.Tx`) will hang forever** — it tries to open a new connection, but none are available, and the existing one is locked by the open transaction.
+
+The symptom: API endpoints hang indefinitely (curl times out) with no error logged.
+
+**WRONG — calls `MonitorByID(db, ...)` inside tx, deadlocks:**
+```go
+func RecordPing(db *sql.DB, monitorID int64, sourceIP string) error {
+    tx, _ := db.Begin()
+    defer tx.Rollback()
+
+    tx.Exec(`INSERT INTO pings (...) VALUES (...)`, ...)
+
+    m, err := MonitorByID(db, monitorID)  // DEADLOCK: tries to open new connection
+    if err != nil { return err }
+
+    next := time.Now().Add(time.Duration(m.GraceMinutes) * time.Minute)
+    tx.Exec(`UPDATE monitors SET ...`, ...)
+    return tx.Commit()
+}
+```
+
+**RIGHT — query within the transaction using `tx.QueryRow`:**
+```go
+func RecordPing(db *sql.DB, monitorID int64, sourceIP string) error {
+    tx, _ := db.Begin()
+    defer tx.Rollback()
+
+    tx.Exec(`INSERT INTO pings (...) VALUES (...)`, ...)
+
+    var graceMinutes int
+    tx.QueryRow(`SELECT grace_minutes FROM monitors WHERE id=?`, monitorID).Scan(&graceMinutes)
+
+    next := time.Now().Add(time.Duration(graceMinutes) * time.Minute)
+    tx.Exec(`UPDATE monitors SET ...`, ...)
+    return tx.Commit()
+}
+```
+
+Rule: inside `db.Begin()` ... `tx.Commit()`, **never** call a function that accepts `*sql.DB`. Every read/write within the transaction boundary must go through `tx.Query`, `tx.QueryRow`, or `tx.Exec`.
+
 ### Migrations
 
 Run on startup, idempotent:
@@ -67,6 +109,8 @@ services:
 ```
 
 SQLite file is self-contained — backup is `cp /data/app.db /backup/`.
+
+**⚠️ Bind-mount permissions:** If using a bind mount (`./data:/home/app/data`) instead of a named volume, Docker Compose creates the host dir as root and non-root containers can't write. See `references/docker-bind-mount-sqlite.md` for the fix.
 
 ## Stripe Subscriptions
 
