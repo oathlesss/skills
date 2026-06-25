@@ -77,6 +77,12 @@ Present the combined findings concisely. Don't dump raw reports — extract the 
 - **Parallel tasks can't coordinate.** If task B needs results from task A, run them sequentially instead.
 - **Delegate tasks can time out or be interrupted.** When model latency is high or the parent agent is also making tool calls, subagents may return `status: interrupted` before completing. If the first subagent in a batch is interrupted and others never started, fall back to direct `web_search` calls — you'll get results faster and more reliably for time-sensitive research. Don't spend multiple turns retrying delegation when direct searches work.
 
+- **Guide compilation requires DEEPER source targeting, not just broader topics.** When the user asks for a "very detailed guide" or comprehensive reference (especially for games, modpacks, community tools, or any topic with creator/community ecosystems), topic-split subagents produce shallow results. The user expects research pulled from SPECIFIC named sources, not general wiki summaries. Structure the research wave by SOURCE TYPE, not just by subtopic:
+  - **YouTube**: search for specific creators by name (e.g. "Pilpoh ATM10 guide", "John Hall ATM10 tips") — target playthroughs, tutorials, tips videos
+  - **Reddit**: search for community threads — pinned guides, tips megathreads, "things I wish I knew" posts, "share your tips" exchanges. Use `site:reddit.com/r/<subreddit>` in queries
+  - **Wikis/official docs**: target specific wiki pages, not just general modpack description pages
+  If the first compilation wave produces a guide that's mostly cross-referenced wiki summaries, it's too shallow. Do a second wave targeting community sources by name. A good litmus test: would someone watching Pilpoh's playthrough find strategies in your guide that a wiki-only reader wouldn't know? If not, go deeper.
+
 ## Support files
 
 - `references/delegate-structure.md` — concrete delegate_task call shape with annotated fields

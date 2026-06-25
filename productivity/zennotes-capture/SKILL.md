@@ -83,6 +83,52 @@ If multiple distinct topics were discussed, create separate notes.
 - The vault lives on the local filesystem — ensure the path is writable before writing
 - Filename convention is flexible — semantic names like `minecraft-modding-research-2026.md` are fine alongside the date-prefixed format. Just make it searchable and descriptive.
 
+## Session Summary Notes
+
+When summarizing inactive Discord sessions (manual or via the Session Summarizer cronjob), use this specific template:
+
+```
+---
+tags: [session-summary]
+created: YYYY-MM-DD
+source: discord
+session_id: <full_session_id>
+---
+
+# Session-YYYY-MM-DD-HH-MM — <topic-slug>
+
+**Title:** <title>
+**Messages:** <count>
+
+## Summary
+<2-4 sentences>
+
+## Key Points
+- <3-6 bullet points>
+
+## Related
+- [[Note Title]] — one-line reason
+```
+
+Key differences from standard notes:
+- `session_id` in frontmatter preserves traceability back to the original conversation
+- `tags: [session-summary]` (not `tags: [session-summary, ...]`) — these are a distinct class of note
+- `## Related` section with `[[WikiLinks]]` to existing vault notes is mandatory when related notes exist
+- Filename: `Session-YYYY-MM-DD-HH-MM-<topic-slug>.md` (capital S, hyphenated datetime, topic slug)
+
+## Related-Note Linking
+
+After creating any note, scan existing vault notes for topical overlap:
+
+1. List notes in `inbox/` and `outbox/` — extract titles and tags from frontmatter
+2. Match by topic domain (Minecraft → Minecraft references, Go/Vue → project notes, etc.)
+3. Append `## Related` with `[[Exact Note Title]]` — exact title, not a guess
+4. Add a one-line reason per link (e.g., `— the modding ecosystem explored here`)
+5. Only add genuinely related links — skip if nothing matches
+
+For retroactive batch linking (50+ notes), use `delegate_task` with 3 parallel subagents, each handling a chunk of file paths. Subagents use `read_file` + `patch` to append sections.
+
 ## References
 
 - `references/research-refinement-pattern.md` — Multi-round research workflow: overview → deep-dive → plan. When to merge notes vs create separate ones.
+- `references/session-summarizer-pattern.md` — Automated session → ZenNotes pipeline: DB queries, cronjob setup, deduplication, and batch processing.

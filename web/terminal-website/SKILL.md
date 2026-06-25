@@ -267,3 +267,9 @@ Run Go backend locally with `go run ./cmd/server/` (the `//go:embed` fails in de
 - **`go.sum` missing**: If the module has no external deps, `go.sum` won't be created. `touch go.sum` before Docker build.
 - **Docker hostname**: `os.Hostname()` returns container ID. Hardcode domain names.
 - **`docker compose up -d` foreground detection**: Same as npm — use background mode.
+- **Embedded dist in git**: `internal/handler/dist/` is a build artifact (copied from `frontend/dist/` before `go build`). Add it to `.gitignore` — the Docker multi-stage build handles this internally, but local dev needs the copy for `//go:embed` to work. Track only the source in `frontend/`.
+
+## Reference Patterns
+
+- **Tab completion**: `GET /api/commands` endpoint + word-boundary matching + suggestion dropdown. See `references/tab-completion.md`.
+- **Canvas easter eggs**: Special response types triggering canvas overlay animations (Matrix rain, etc.). See `references/canvas-easter-eggs.md`.

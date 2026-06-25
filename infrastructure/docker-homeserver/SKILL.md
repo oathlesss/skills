@@ -49,6 +49,8 @@ tailscale:
 
 **Why `network_mode: host`:** Tailscale assigns the host a `100.x.x.x` IP. With host networking, that IP applies to the entire machine — SSH, Caddy, Minecraft, everything is reachable through it without per-service config changes.
 
+**⚠️ Reachability caveat: only `0.0.0.0`-bound ports are Tailscale-accessible.** Ports exposed only on internal Docker bridge networks (like the `homeserver` network) are NOT reachable via the Tailscale IP — they have no host port mapping. Services like oathless-terminal, homepage, and zennotes are only reachable through Caddy's reverse proxy (ports 80/443). To check what's actually exposed, use `ss -tlnp` on the host — anything on `0.0.0.0` or `[::]` is reachable. See `references/tailscale-reachability.md` for the full breakdown.
+
 **State directory:** `./tailscale/state` persists the Tailscale identity. Once authenticated, the container survives restarts without re-auth. The auth key is only needed for the first run.
 
 **⚠️ PITFALL: `--ssh` flag.** Do NOT add `--ssh` if the host already has sshd running on port 22. Tailscale SSH intercepts incoming SSH connections on the tailnet IP and tries to authenticate via Tailscale's ACL, producing errors like `failed to look up local user`. Users with a working system sshd should connect via normal SSH over the Tailscale IP (e.g. `ssh user@100.x.x.x`). Only use `--ssh` if you specifically want Tailscale-managed SSH with ACL-based auth.
@@ -1635,6 +1637,7 @@ dockge:
 - `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
 - `references/minecraft-plugins.md` — switching to Paper/Purpur for plugins, plugin repos, version checking
 - `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)
+- `references/tailscale-reachability.md` — what's reachable via Tailscale IP + port vs what needs Caddy, and how to check with `ss -tlnp`
 - `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers
 - `references/homepage-forgejo-dockge-dozzle.md` — Homepage, Forgejo, Dockge, and Dozzle: Compose snippets, Caddy entries, ports, resource usage, and verification
 - `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers
