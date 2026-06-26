@@ -66,63 +66,68 @@ if (data.type === 'clear') {
 
 ### Animation Function
 
-Size canvas to container, run setInterval for the animation, setTimeout for cleanup:
+Save the current theme before switching (so it can be restored after). Size canvas accounting for `devicePixelRatio` for crisp rendering on high-DPI and mobile screens:
 
 ```js
 function startMatrixRain() {
+  const prevTheme = localStorage.getItem('theme') || 'rose-pine'
   matrixActive.value = true
-  applyTheme('matrix')  // optional: switch theme
+  applyTheme('matrix')
 
   nextTick(() => {
     const canvas = matrixCanvas.value
     const container = canvas.parentElement
-    canvas.width = container.clientWidth
-    canvas.height = container.clientHeight
-    // ponytail: no resize observer — this runs once per invocation
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = container.clientWidth * dpr
+    canvas.height = container.clientHeight * dpr
+    canvas.style.width = container.clientWidth + 'px'
+    canvas.style.height = container.clientHeight + 'px'
 
     const ctx = canvas.getContext('2d')
+    ctx.scale(dpr, dpr)  // draw using CSS pixels
     const chars = '日ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘｱﾎﾃﾏｹﾒｴｶｷﾑﾕﾗｾﾈｽﾀﾇﾍ0123456789'
     const fontSize = 14
-    const columns = Math.floor(canvas.width / fontSize)
+    const columns = Math.floor(container.clientWidth / fontSize)
     const drops = new Array(columns).fill(0)
 
     const draw = () => {
-      // Semi-transparent black for trail effect
       ctx.fillStyle = 'rgba(0, 0, 0, 0.05)'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.fillRect(0, 0, container.clientWidth, container.clientHeight)
       ctx.fillStyle = '#00ff41'
       ctx.font = `${fontSize}px monospace`
 
       for (let i = 0; i < drops.length; i++) {
         const char = chars[Math.floor(Math.random() * chars.length)]
         ctx.fillText(char, i * fontSize, drops[i] * fontSize)
-        if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+        if (drops[i] * fontSize > container.clientHeight && Math.random() > 0.975) {
           drops[i] = 0
         }
         drops[i]++
       }
     }
 
-    const interval = setInterval(draw, 40)  // ~25fps
+    const interval = setInterval(draw, 40)
 
     matrixTimer.value = setTimeout(() => {
       clearInterval(interval)
-      // Fade to solid color
       let opacity = 0
       const fadeOut = setInterval(() => {
         opacity += 0.05
-        ctx.fillStyle = `rgba(13, 13, 13, ${opacity})`
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`
+        ctx.fillRect(0, 0, container.clientWidth, container.clientHeight)
         if (opacity >= 1) {
           clearInterval(fadeOut)
-          matrixActive.value = false
+          applyTheme(prevTheme)  // restore theme before removing canvas
           lines.value = []
+          matrixActive.value = false
         }
       }, 30)
     }, 8000)
   })
 }
 ```
+
+Key: use `container.clientWidth/Height` (not `canvas.width/height`) for all draw calls after scaling — the `ctx.scale(dpr, dpr)` maps CSS pixels to physical pixels, so you draw in CSS coordinates.
 
 ## Duration Tuning
 

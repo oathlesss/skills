@@ -262,7 +262,7 @@ Run Go backend locally with `go run ./cmd/server/` (the `//go:embed` fails in de
 ## Pitfalls
 
 - **`v-if` + focus**: Always `await nextTick()` then refocus after remounting hidden inputs.
-- **HTML whitespace collapse**: Use `&nbsp;` for spacing, not CSS margins or regular spaces.
+- **HTML whitespace collapse**: Use `&nbsp;` for spacing, not CSS margins or regular spaces. Applies to BOTH the live input prompt AND history display lines — browsers collapse whitespace between adjacent inline elements in both places. When you add `❯ text` as two `<span>` elements in history output, the space between them collapses just like in the live input.
 - **`npm install` foreground detection**: The terminal tool may flag npm install as a server process. Use `background=true` with `notify_on_complete=true`.
 - **`go.sum` missing**: If the module has no external deps, `go.sum` won't be created. `touch go.sum` before Docker build.
 - **Docker hostname**: `os.Hostname()` returns container ID. Hardcode domain names.
