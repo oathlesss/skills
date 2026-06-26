@@ -331,3 +331,7 @@ becomes biome modifiers + placed features).
 - `references/nbt-structure-gen.md` — Python NBT generation script + structure datapack chain
 - `references/mod-idea-bank.md` — 625 learning-mod ideas in Obsidian, organized by category and complexity
 - `scripts/validate-assets.py` — Post-build checker: verifies every registered block/item has model JSONs and all texture references resolve to actual PNG files
+
+## Companion Documents
+
+- `/home/ruben/obsidian-vault/inbox/minecraft-mod-reference.md` — Condensed quick-reference (Tips & Tricks, Best Practices, Common Examples, Quick Reference table) in the same format as the Go reference doc. Use for fast lookups; use this skill for the deep reference and procedural workflows.
