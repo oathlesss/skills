@@ -104,6 +104,18 @@ The Nightly Notes Curator cron job (`2e164fee3899`) currently has a self-contain
 ### Session-summarizer notes are not authoritative
 The Session Summarizer cronjob (`7852c13dd74b`) auto-generates `Session-YYYY-MM-DD-HH-MM-topic-slug.md` notes in inbox/. These are LLM-written summaries with no verification step — they can fabricate conclusions, claim tasks were completed that weren't, or misattribute decisions. **Always cross-reference these against actual system state** (cronjob list, git log, filesystem) before treating their claims as fact. They are useful pointers, not ground truth.
 
+### WikiLinks in summarizer notes often don't match actual H1s
+The summarizer creates `[[WikiLinks]]` using the session title or its best guess at the note name — but the actual target note's H1 heading may differ (e.g., `[[All the Mods 10 (ATM10) — Ultimate Guide]]` vs actual H1 `All the Mods 10 (ATM10) — Definitive Mega-Guide`). When following a WikiLink from a summarizer note, search the vault by partial title or keyword rather than assuming the exact H1 match. If the target note exists under a different name, the link is dangling and needs repair.
+
+### User can't see notes in quick/ from ZenNotes app
+ZenNotes has a `primaryNotesLocation` setting in `/home/ruben/obsidian-vault/.zennotes/vault.json` that controls which directory is the default view. If the user says they can't see notes in a specific directory (usually `quick/`), check this config first — the notes are likely there, just not in the primary view. The fix is to tell the user to navigate to that folder in the ZenNotes UI, OR to change `primaryNotesLocation`. Do NOT move notes from quick/ back to inbox/ to work around this — quick/ is the correct destination for polished notes.
+
+### Guide cluster cross-linking pattern
+When creating a series of related reference guides (e.g., standalone mod guides derived from a mega-guide), use this linking structure:
+- **Parent guide** — add a `**Standalone Guides:**` line in the frontmatter block listing all child guides as WikiLinks
+- **Each child guide** — add a `**Related:**` line in the frontmatter linking back to the parent and to sibling guides that share topic overlap
+- This creates a navigable knowledge graph where readers can jump from the mega-guide to any deep-dive and back
+
 ## Exporting Notes
 
 To share a note as PDF or other format, see `references/pdf-export.md` for the conversion workflow (fpdf2-based, works without sudo or system PDF engines).
