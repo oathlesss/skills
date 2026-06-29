@@ -743,6 +743,74 @@ export default {
 
 Install: `npm install -D tailwindcss@3 postcss autoprefixer` (no `@tailwindcss/vite`). Both v3 and v4 are valid — v3 is more explicit for custom themes, v4 is simpler for standard setups.
 
+## Tailwind CSS Theme via CSS Custom Properties
+
+Define theme colors as CSS custom properties in `style.css` for centralized, swappable theming:
+
+```css
+@import "tailwindcss";
+
+:root {
+  --rp-base: #191724;
+  --rp-surface: #1f1d2e;
+  --rp-text: #e0def4;
+  --rp-love: #eb6f92;
+  --rp-gold: #f6c177;
+  --rp-iris: #c4a7e7;
+  --rp-foam: #9ccfd8;
+  --rp-pine: #31748f;
+  --rp-rose: #ebbcba;
+  --rp-subtle: #908caa;
+}
+```
+
+Reference via `style="color: var(--rp-iris)"` in components. This keeps the theme centralized and
+swappable — support `theme` commands at runtime by swapping CSS custom properties on `:root`.
+
+## Automated Deploy Pipeline (Webhook → Deploy → Rollback)
+
+For services deployed via Docker Compose with `build:` on the homelab, a webhook-based
+auto-deploy pipeline is the simplest CI/CD option. No runner containers, no cron polling —
+a small Python receiver on the host listens for push events from Forgejo, validates an
+HMAC signature, and runs a deploy script.
+
+### Architecture
+
+```
+git push → Forgejo → POST webhook (HMAC-signed) → receiver (host:9090) → deploy script
+                                                                           ↓
+                                                               git pull → docker compose build
+                                                                       → docker compose up -d
+                                                                       → health check (10 retries)
+                                                                       → rollback on failure
+```
+
+### Deploy script pattern
+
+1. `git pull` — bail early if no new commits
+2. `docker tag <image>:local <image>:rollback` — save current image
+3. `docker compose build --no-cache <service>` — fresh build
+4. `docker compose up -d <service>` — redeploy
+5. Health check — `docker exec <service> wget -q http://localhost:8080`, retry 10× with 2s delay
+6. On failure: `docker tag <image>:rollback <image>:local && docker compose up -d <service>` — restore
+
+### Webhook receiver pattern
+
+Python stdlib only, zero dependencies. Validates `X-Forgejo-Signature` (HMAC-SHA256) against a
+shared secret. Only acts on `push` events to `main`. Run as a **systemd user service** so Docker
+commands work with the user's docker group membership.
+
+### Pitfalls
+
+- **Docker network gateway for intra-network webhooks:** When Forgejo runs in Docker and the receiver
+  runs on the host, Forgejo can't use `localhost`. Use the Docker bridge gateway IP:
+  `docker network inspect <network> --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'`
+- **Health check reachability:** Docker Compose services on internal networks aren't port-mapped.
+  Use `docker exec <container> wget -q http://localhost:8080` — it runs inside the container's
+  network namespace.
+
+Full deploy script and webhook receiver code: `references/webhook-deploy-pipeline.md`.
+
 ## Development Workflow
 
 **Primary (Docker-first — zero local deps, preferred):**
@@ -777,3 +845,8 @@ Prefer Docker-first for the build-test cycle — it's the same command for local
 - `references/forgejo-repo-create.md` — Creating repos on Forgejo via API.
 - `references/domain-check.md` — Checking domain name availability with `dig +short NS` (no whois needed).
 - `references/vue-text-highlight-overlay.md` — Regex/match highlighting in a `<textarea>` via stacked transparent layers.
+- `references/oathless-terminal-config.md` — oathless.dev specific terminal config: commands, themes, UX decisions.
+- `references/go-vue-terminal.md` — Full terminal website implementation: Vue 3 terminal component, Go command registry, Rose Pine theme details, keyboard handling patterns.
+- `references/webhook-deploy-pipeline.md` — Deploy script, webhook receiver, systemd service, and Forgejo config for auto-deploy pipelines with health check + rollback.
+- `references/canvas-easter-eggs.md` — Canvas overlay animations (Matrix rain, etc.) triggered by special response types from the backend.
+- `references/tab-completion.md` — Tab completion endpoint + word-boundary matching + suggestion dropdown for terminal-style UIs.

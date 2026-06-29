@@ -414,6 +414,185 @@ When executing a large multi-batch plan (10+ items), use this pattern:
 
 Pitfall: The user corrected you did NOT finish when work stopped at 6 of 16 items. If the meta-prompt says continuous, it means continuous. If the user asks whether everything is done, do not say yes until you have actually checked every file.
 
+## Additional NeoForge 1.21.x Pitfalls & Patterns (absorbed from minecraft-mod-dev)
+
+### Stubbing Pattern
+
+When an item/block/entity needs complex behavior that can't be implemented immediately:
+1. Create the class as a simple extension of the base type (e.g., `extends Item`).
+2. Register it in the DeferredRegister and creative tab.
+3. Add model/blockstate JSONs so it renders in-game.
+4. The behavior can be filled in later without breaking the build.
+
+This lets you close gaps rapidly while keeping the build green.
+
+### Asset validation pitfall
+
+`./gradlew build` only catches compilation, not asset gaps. The build passes even when:
+- Block models reference missing texture PNGs
+- Items lack model JSONs entirely
+- Entities have no registered renderer
+- Structures have empty registries
+
+After batch-creating blocks/items/entities, always verify visually in-game or run the asset validation script:
+`python3 scripts/validate-assets.py` (see `scripts/validate-assets.py`).
+
+### SmallFireball constructor (1.21.1)
+
+Constructor is `SmallFireball(EntityType.SMALL_FIREBALL, Level)`, then use
+`setPos()` and `setDeltaMovement()`. NOT the old `(Level, LivingEntity, dx, dy, dz)`.
+
+### Packet handler @OnlyIn
+
+Do NOT put `@OnlyIn(Dist.CLIENT)` on static packet handler methods. It causes
+`NoSuchMethodError` on server due to class stripper. Remove the annotation
+and guard internally if needed.
+
+### PlayerInteractEvent.RightClickEmpty
+
+This event does NOT have `getItemStack()`. Use `event.getEntity().getItemInHand(event.getHand())`.
+Does NOT have `setCanceled()`.
+
+### Collections.shuffle with RandomSource
+
+Not supported. Use `new Random()` or skip shuffling if order doesn't matter.
+
+### Datapack resource loading at server start
+
+`AddServerReloadListenersEvent` does NOT exist in NeoForge 1.21.x.
+For reading datapack resources when the server starts, use
+`ServerAboutToStartEvent` — its `getServer().getResourceManager()` provides
+the full datapack resource manager. For continuous reload-on-datapack-change use a
+`PreparableReloadListener` registered via the mod event bus.
+
+### Import Paths (bulk fixes)
+
+When refactoring packages, use `sed` for batch fixes — don't fix files one at a time:
+```bash
+sed -i 's/old.package/new.package/g' src/main/java/com/thau/**/*.java
+```
+
+### Registry API Changes (1.21.x)
+
+- `BuiltInRegistries.ENCHANTMENT.get(ResourceLocation)` returns `Holder.Reference<Enchantment>`, NOT raw `Enchantment`. Access `.value()` on the holder.
+- `BuiltInRegistries.ENCHANTMENT.getOptional(key)` returns `Optional<Holder.Reference<Enchantment>>`.
+- `RecipeManager.getRecipeFor()` uses `SingleRecipeInput` in 1.21.x, not `SimpleContainer`.
+
+### Entity renderer for Monster-derived entities
+
+`HumanoidMobRenderer` requires the entity to extend `HumanoidMob`.
+Entities extending `Monster` directly (like CultistEntity) cannot use it.
+Use `MobRenderer<EntityType, HumanoidModel<EntityType>>` instead:
+```java
+public class CultistRenderer extends MobRenderer<CultistEntity, HumanoidModel<CultistEntity>> {
+    public CultistRenderer(EntityRendererProvider.Context ctx) {
+        super(ctx, new HumanoidModel<>(ctx.bakeLayer(ModelLayers.PLAYER)), 0.5f);
+    }
+}
+```
+
+### Block item access across packages
+
+When block items are registered in a separate class, ensure the `item()` method is `public static` and returns `Supplier<Item>`:
+```java
+output.accept(com.thau.core.block.essentia.ThauBlocks.item("alembic").get());
+```
+
+### Registries — custom vs vanilla
+
+For custom registries (like aspects): register via `RegisterEvent` in a
+`@EventBusSubscriber` class, not datapack JSON. NeoForge 1.21.x custom
+registry loading from JSON has limitations; code-side registration is
+more reliable and still extensible via events.
+
+### Network packets
+
+Use `CustomPacketPayload` + `StreamCodec` pattern. Encode/decode with
+`FriendlyByteBuf.readVarInt()/writeVarInt()` and `readUtf()/writeUtf()`.
+Register handler via `registrar.playToClient(payload.TYPE, payload.STREAM_CODEC, payload::handle)`.
+
+### Pattern: BlockEntity with ticker
+
+```java
+public class MyBlock extends BaseEntityBlock {
+    @Override public BlockEntity newBlockEntity(BlockPos pos, BlockState state) { ... }
+    @Override public <T extends BlockEntity> BlockEntityTicker<T> getTicker(
+            Level level, BlockState state, BlockEntityType<T> type) {
+        return level.isClientSide() ? null :
+            createTickerHelper(type, MY_ENTITY_TYPE.get(), MyBlockEntity::tick);
+    }
+}
+```
+
+### Pattern: DataComponent registration (1.21.x)
+
+```java
+public static final DeferredRegister<DataComponentType<?>> DATA_COMPONENTS =
+    DeferredRegister.create(Registries.DATA_COMPONENT_TYPE, modId);
+
+public record MirrorBinding(ResourceKey<Level> dim, BlockPos pos) {
+    public static final Codec<MirrorBinding> CODEC = RecordCodecBuilder.create(i ->
+        i.group(
+            Level.RESOURCE_KEY_CODEC.fieldOf("dim").forGetter(MirrorBinding::dim),
+            BlockPos.CODEC.fieldOf("pos").forGetter(MirrorBinding::pos)
+        ).apply(i, MirrorBinding::new));
+}
+
+public static final Supplier<DataComponentType<List<MirrorBinding>>> BINDINGS =
+    DATA_COMPONENTS.register("bindings",
+        () -> DataComponentType.<List<MirrorBinding>>builder()
+            .persistent(BINDINGS_CODEC)
+            .networkSynchronized(ByteBufCodecs.fromCodecWithRegistriesTrusted(BINDINGS_CODEC))
+            .build());
+
+// Read/write on ItemStack
+List<MirrorBinding> bindings = stack.getOrDefault(BINDINGS.get(), List.of());
+stack.set(BINDINGS.get(), newBindings);
+```
+
+### Pattern: Multipart blockstate (pipe/tube connections)
+
+For blocks that connect to neighbors (pipes, tubes, cables), use multipart
+blockstate JSON with BooleanProperty directions:
+
+```java
+public static final BooleanProperty NORTH = BooleanProperty.create("north");
+// ... SOUTH, EAST, WEST, UP, DOWN
+
+@Override
+public BlockState getStateForPlacement(BlockPlaceContext ctx) {
+    return defaultBlockState()
+        .setValue(NORTH, canConnectTo(ctx.getLevel(), pos, Direction.NORTH))
+        ;
+}
+```
+
+Blockstate JSON using multipart:
+```json
+{
+  "multipart": [
+    { "apply": { "model": "mod:block/pipe_core" } },
+    { "when": { "north": true }, "apply": { "model": "mod:block/pipe_side" } },
+    { "when": { "south": true }, "apply": { "model": "mod:block/pipe_side", "y": 180 } }
+  ]
+}
+```
+
+### Pre-commit Hook
+
+```bash
+# .git/hooks/pre-commit
+#!/bin/bash
+set -e
+export JAVA_HOME="${JAVA_HOME:-$HOME/.local/java/jdk-21.0.11+10}"
+./gradlew build 2>&1 | tail -20
+if ! ./gradlew build 2>&1 | grep -q "BUILD SUCCESSFUL"; then
+    echo "❌ BUILD FAILED — commit blocked."
+    exit 1
+fi
+echo "✓ Build passed — allowing commit."
+```
+
 ## References
 
 - `references/thaumcraft-remake-plan.md` — Full Thaumcraft recreation plan: system architecture, 9-phase roadmap with deliverables, performance strategy, risk analysis.
@@ -428,8 +607,12 @@ Pitfall: The user corrected you did NOT finish when work stopped at 6 of 16 item
 - `references/modrinth-api-research.md` — Modrinth v2 API workflow for discovering modpacks by mod combination.
 - `references/modpack-landscape-ars-create-aeronautics.md` — Concrete modpack landscape analysis: Ars Nouveau + Create + Aeronautics intersection.
 - `references/gap-analysis.md` — Systematic audit framework for mod projects. Steps for file inventory, batch cross-referencing, honest status reporting. Includes current Thaumcraft known gaps.
+- `references/tc6-package-map.md` — Map of TC6 source packages to our thau equivalents.
+- `references/nbt-structure-gen.md` — Python NBT generation script + structure datapack chain.
+- `references/mod-idea-bank.md` — 625 learning-mod ideas in Obsidian, organized by category and complexity.
 
 ## Templates and Scripts
 
 - `templates/recipe-shaped.json` — Correct NeoForge 1.21.1 shaped recipe JSON template (object ingredient format).
 - `scripts/recipe-fixer.py` — Batch-fix old string-format recipes to object format for NeoForge 1.21.1.
+- `scripts/validate-assets.py` — Post-build checker: verifies every registered block/item has model JSONs and all texture references resolve to actual PNG files.
