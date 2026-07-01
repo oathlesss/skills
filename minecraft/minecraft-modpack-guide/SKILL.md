@@ -189,8 +189,43 @@ Ruben called standalone guides "very undetailed" when they explain what things d
 ### Community consensus contradicting mod documentation
 The community often converges on strategies that contradict the mod's "obvious" progression. Examples: skip MA Growth Accelerators (exponentially expensive) and use AE2 Growth Accelerators instead; use Red Fertilizer over Essence Farmland (secondary seed drops ≠ growth speed); the Harvester Pylon covers 9×9 not 15×15 (that's the MA Harvester machine with Awakened Supremium). Always cross-check official mod docs against community practice. Flag these contradictions explicitly — "community consensus: do X even though the mod pushes Y." The player who follows the mod's intended path without checking Reddit will waste hours.
 
+## Guide Auditing
+
+When the user asks to review/audit existing guides for quality, use the systematic procedure in `references/audit-checklist.md`. The workflow is:
+
+1. **File-size triage** — sort guides by size; under 10KB is a red flag for reference sheets
+2. **Grep requirement scan** — check all 7 non-negotiable requirements via grep patterns
+3. **Spot-read passed candidates** — verify content quality, not just header presence
+4. **Duplicate detection** — multiple files covering the same mod with different filenames
+5. **Tiered report** — pass table (with requirement columns) + fail table (with problem column)
+
+Always offer to rebuild failing guides after the audit. The user may want all rebuilt, only the high-priority ones, or just the audit report.
+
 ## Related Skills
 
 - **notes-curation** — frontmatter, WikiLinks, graduation criteria, vault structure
 - **parallel-research** — delegate_task patterns for multi-source research
 - **youtube-video-summary** — extract captions from YouTube playthroughs
+
+## Mega-Guide Update After Rebuilds
+
+After rebuilding standalone guides with fresh community research, the mega-guide's corresponding sections are often **factually stale.** The standalone guides found updated values that the mega-guide's older summaries don't reflect. Always follow a rebuild wave with a mega-guide update pass:
+
+1. **Cross-check factual claims** — read the rebuilt standalone guide's core values (e.g., spawner entity caps, pylon ranges, growth accelerator consensus) and verify the mega-guide section matches. Common drift points: ATM10 rebalanced values, community consensus that shifted since the mega-guide was written, mod version changes.
+2. **Add Deep Dive pointers** — insert `> 💡 **Deep Dive:** [[Guide Name]] (XXKB — key topics)` blocks at each section header that has a corresponding standalone guide. This makes the mega-guide a navigation hub: overview here, build-along there.
+3. **Update the `updated` date** in mega-guide frontmatter.
+
+Example of a Deep Dive pointer:
+```markdown
+## 3. Best Mob Farms
+
+> 💡 **Deep Dive:** [[Apotheosis — ATM10 Standalone Guide]] (51KB build-along — spawners, enchanting library, gems, world tiers), [[Hostile Neural Networks — ATM10 Standalone Guide]] (53KB — data models, simulation chambers, automation)
+```
+
+### Pitfall: Mega-guide factual drift after standalone rebuilds
+The mega-guide's summary sections were written when standalone guides were reference sheets. After rebuilding those guides with fresh YouTube/Reddit research, the mega-guide's older claims are likely wrong. Examples from ATM10: the mega-guide said spawner entity cap was 64 (standalone found 32 in ATM10), Prismarine Crystals for No AI (standalone found Chorus Fruit + Golden Apple), and 15×15 Harvester Pylon range (standalone found 9×9). Always re-sync the mega-guide after rebuilds — don't assume the old summaries are still accurate.
+
+## Reference Files
+
+- `references/audit-checklist.md` — systematic grep-driven audit procedure for scoring guides against the 7 format requirements. Use when the user asks "are these guides detailed enough?" Includes greppable scoring, spot-read verification steps, duplicate detection, and common audit finding patterns.
+- `references/batch-guide-rebuild.md` — proven delegate_task wave pattern for rebuilding multiple failing guides in parallel. Covers wave planning, delegate context template, size targets per mod type, and throughput benchmarks.
