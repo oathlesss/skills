@@ -250,6 +250,10 @@ Session data lives in SQLite at `~/.hermes/state.db`. Full schema (sessions + me
 
 → `references/hermes-session-db.md`
 
+Common maintenance script pitfalls (datetime timezone handling, missing sqlite3 CLI) are documented in:
+
+→ `references/hermes-maintenance-pitfalls.md`
+
 Key patterns:
 - **Inactivity detection:** `MAX(m.timestamp)` subquery with `HAVING last_ts < unixepoch() - N`
 - **Cron agent access:** Use `terminal` (Python + sqlite3), not `execute_code` (blocked in cron context)

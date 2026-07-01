@@ -69,16 +69,53 @@ created: YYYY-MM-DD
 
 > **Pack:** <Pack Name> (Minecraft <version>, <loader>)
 > **Sources:** <attribution>
-> **Related:** [[Parent mega-guide]], [[Related standalone guide 1]], ...
+> **Related:** [[Parent mega-guide]], [[Sibling with overlap]], ...
 
 ## Why <Mod Name>
 <!-- 2-3 sentences on why this mod matters in this pack -->
 
-## 1. Section (progression-based)
-<!-- Deep detail extracted from mega-guide, expanded for standalone use -->
+## Core Mechanics Reference (if applicable)
+<!-- Quick-reference table of key blocks/items/upgrades before the build-along -->
 
-## N. Quick Reference — Must-Craft List
-| Item | Priority | Why |
+## Stage 1: Early Game — <Goal> (Hours X-Y)
+### Shopping List (Exact Quantities)
+| Item | Qty | Notes |
+|---|---|---|
+
+### Block Layout Diagram
+<!-- ASCII art of the first setup -->
+
+### Step-by-Step Build-Along
+1. ...
+
+## Stage 2: Mid Game — <Goal> (Hours X-Y)
+<!-- Same structure: shopping list, layout, build-along -->
+
+## Stage 3: End Game — <Goal> (Hours X+)
+<!-- Same structure -->
+
+## <Mod> vs. <Alternative>
+<!-- Comparison table if the mod competes with another -->
+
+## Pipe & Logistics (if automation mod)
+<!-- Comparison table of transport systems with recommended progression -->
+
+## Common Mistakes (From Community Help Threads)
+<!-- Numbered list, minimum 8 entries. Problem → Why it's bad → Fix -->
+
+## Quick Reference — Must-Craft List
+| # | Item | Priority | Why |
+|---|---|---|---|
+
+## "Build This Now" — Stage Checklists
+### Stage 1 (First Session)
+- [ ] Item 1
+- [ ] Item 2
+
+### Stage 2 (After X)
+- [ ] ...
+
+## TPS Notes
 ```
 
 ### Standalone Guide Content Rules
@@ -89,6 +126,30 @@ created: YYYY-MM-DD
 - **Include TPS notes** for any mod that affects server performance.
 - **Cross-link aggressively.** Every guide links back to the mega-guide and to sibling guides that share topic overlap.
 - **Update the mega-guide's frontmatter** to include `**Standalone Guides:**` line with all child WikiLinks.
+
+### Standalone Guide Format Requirements (NON-NEGOTIABLE)
+
+Ruben called reference-style guides "very undetailed" and asked for "setup examples" with "tables to visualize." Every standalone guide for a major mod (S-tier and A-tier) MUST be a **build-along manual, not a reference exposition.** The player should be able to follow it step-by-step in-game.
+
+**Required per guide:**
+
+1. **Stage-based progression sections** — bucket content into time-tagged stages (e.g., "Stage 1: Early Game (Hours 0-5)", "Stage 2: Mid Game (Hours 5-20)", "Stage 3: End Game (Hours 20+)"). Each stage answers: what's the goal at this point, exactly what do I build, and what does success look like?
+
+2. **Shopping lists with exact quantities** — every stage needs a table of items with specific quantities. Not "some Productivity Upgrades" — "4-16 Productivity Upgrades (Basic)." Not "a few hives" — "4 Advanced Hives." Players use these as literal checklists while crafting.
+
+3. **Block layout diagrams** — use ASCII art for spatial setups (hive banks, farm layouts, checkerboard patterns, pipe routing). A text description of where blocks go is insufficient. Show the top-down or side-view layout.
+
+4. **Step-by-step build-along** — numbered instructions within each stage that can be executed in sequence. "1. Find wild nests. 2. Craft 4 Advanced Hives. 3. Place Feeding Slabs..." — imperative, sequential, actionable.
+
+5. **"Common Mistakes" section** — aggregate problems from community help threads (Reddit, Discord). Each mistake: what the player does wrong, why it's bad, and the exact fix. Minimum 8 entries for S-tier mods. Source from actual community reports, not speculation.
+
+6. **"Build This Now" checklist** — stage-based checkbox lists at the end of the guide. Condensed version of the shopping lists so the player can scan "what do I need right now" without re-reading sections.
+
+7. **Pipe/Logistics comparison table** (for mods with automation) — compare at least 3 transport systems (Pipez, LaserIO, XNet, SFM, Modular Routers, AE2) with pros/cons and a recommended progression order.
+
+**Format priority:** tables > ASCII diagrams > prose. If information can be conveyed in a table or diagram, prefer that over paragraphs. Prose is for the "why" — tables and diagrams are for the "what" and "how."
+
+The template in Phase 4 reflects this structure. A guide that hits all 7 requirements will typically be 20-25KB for an S-tier mod; if yours is under 10KB, it's probably a reference sheet, not a build-along guide.
 
 ## Vault Placement
 
@@ -121,6 +182,12 @@ Standalone guides that don't link back to the mega-guide become orphaned. Update
 
 ### Fabricated facts in session-summarizer notes
 The Session Summarizer cronjob may claim notes exist that don't (e.g., `[[All the Mods 10 (ATM10) — Ultimate Guide]]` linking to a note never created). When the user asks about content "from a guide," verify the actual vault contents. The ultimate guide might exist as `atm10-ultimate-guide.md` under a different H1 than the summarizer guessed.
+
+### Reference-style standalone guides (Ruben's #1 complaint)
+Ruben called standalone guides "very undetailed" when they explain what things do without showing what to build. A standalone guide that reads like a wiki page (here's what each block does, here are the tiers, here are the recipes) is a FAILED guide. The player already has JEI for recipes — they need **stage-based build-along with tables, quantities, layouts, and checklists.** See "Standalone Guide Format Requirements" above. A guide under 10KB for an S-tier mod is almost certainly a reference sheet, not a build-along manual.
+
+### Community consensus contradicting mod documentation
+The community often converges on strategies that contradict the mod's "obvious" progression. Examples: skip MA Growth Accelerators (exponentially expensive) and use AE2 Growth Accelerators instead; use Red Fertilizer over Essence Farmland (secondary seed drops ≠ growth speed); the Harvester Pylon covers 9×9 not 15×15 (that's the MA Harvester machine with Awakened Supremium). Always cross-check official mod docs against community practice. Flag these contradictions explicitly — "community consensus: do X even though the mod pushes Y." The player who follows the mod's intended path without checking Reddit will waste hours.
 
 ## Related Skills
 
