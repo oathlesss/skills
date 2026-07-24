@@ -205,6 +205,20 @@ This applies to both dotenv files and plain text files (like `cf_api_key.txt`). 
 
 Running `docker compose config` with decrypted env files present prints all resolved secrets to stdout. Always clean up plaintext files before validation, or use a temporary directory.
 
+### ⚠️ PITFALL: Corrupted env file from failed SOPS decryption
+
+When a `.sops` file fails to decrypt (wrong key, corrupted ciphertext, format mismatch), SOPS writes the **error message** to stdout. If that stdout was redirected to the output env file (e.g. `sops --decrypt secrets/x.env.sops > secrets/x.env`), Docker Compose parses the error message as dotenv. Symptom: `failed to read .../x.env: line 1: key cannot contain a space` or similar cryptic env-parsing errors.
+
+**Fix:** Re-decrypt the `.sops` file and verify the first line is a proper `KEY=VALUE` pair before deploying:
+
+```bash
+~/.local/bin/sops --input-type dotenv --output-type dotenv --decrypt secrets/mc.env.sops > secrets/mc.env
+# Verify the first line is a valid KEY=VALUE pair (not an error message)
+head -n1 secrets/mc.env | grep -q '=' || echo "CORRUPTED - re-decrypt needed"
+```
+
+**Prevention:** Check the decrypt exit code. deploy.sh already uses `if "$SOPS" --decrypt ... 2>/dev/null; then` — but when stdout redirection overrides the output file, a non-zero exit is still the only reliable signal. Never rely on file content alone after decryption.
+
 ### Per-Service Isolation in docker-compose.yml
 
 Replace monolithic `${VAR}` substitution with per-service `env_file:`:
@@ -1164,23 +1178,28 @@ The stack uses `itzg/minecraft-server:latest` for the Minecraft service. This im
 
 ### Switching to a CurseForge Modpack (AUTO_CURSEFORGE)
 
-To install a CurseForge modpack (e.g. "Integrated Minecraft"), switch from a mod loader type to `AUTO_CURSEFORGE`:
+To install a CurseForge modpack (e.g. ATM10 To The Sky), use `MOD_PLATFORM: AUTO_CURSEFORGE` (the modern itzg approach — prefer over the legacy `TYPE`):
 
 1. **Get a CurseForge API key** from https://console.curseforge.com/ — required for discovery (API search, file listing) AND download. The CF v1 API rejects all requests without a key. You cannot even look up a modpack's project ID without one.
-2. Add it to `.env` as `CF_API_KEY='...'` (wrap in single quotes)
-3. Update `docker-compose.yml`:
+2. **Encrypt the key with SOPS** — create `secrets/cf_api_key.txt` (plain text, single line), then `sops --encrypt secrets/cf_api_key.txt > secrets/cf_api_key.txt.sops`. The deploy.sh script handles plain-text `.txt.sops` files alongside dotenv secrets.
+3. Update `docker-compose.yml` — use `CF_API_KEY_FILE` (not `CF_API_KEY`) to avoid `$` expansion when the key comes from an `env_file:`:
 
 ```yaml
 minecraft:
+  image: itzg/minecraft-server:java21      # 1.21.x modpacks need Java 21
+  volumes:
+    - ./minecraft-atm10sky/data:/data
+    - ./secrets/cf_api_key.txt:/run/secrets/cf_api_key:ro
   environment:
-    TYPE: "AUTO_CURSEFORGE"
-    CF_API_KEY: ${CF_API_KEY}
-    CF_SLUG: "integrated-minecraft"          # or CF_PAGE_URL for the full URL
-    MEMORY: "8G"
+    MOD_PLATFORM: AUTO_CURSEFORGE          # modern approach (prefer over TYPE)
+    CF_SLUG: all-the-mods-10-sky           # from the CurseForge URL slug
+    CF_API_KEY_FILE: /run/secrets/cf_api_key   # avoids $ expansion in env_file
+    MEMORY: 10G                            # modpacks with 300+ mods need 8-12G
 ```
 
 4. **Back up the existing world** before restarting — the modpack's MC version likely differs and the world won't be compatible
-5. `docker compose up -d minecraft`
+5. **Use a fresh data directory** (e.g. `./minecraft-atm10sky/data/`) — never reuse a vanilla or different-modpack data directory
+6. `docker compose up -d minecraft` — first launch downloads ~500 mods (3-5 min) then generates world (1-2 min)
 
 **⚠️ PITFALL: World incompatibility.** Switching mod loader type or MC version will break existing worlds. Always back up `./minecraft/data/world/` before changing `TYPE` or `VERSION`.
 
@@ -1635,6 +1654,7 @@ dockge:
 - `templates/migrate-secrets.py` — migration helper for moving secrets between formats
 - `references/crafty-controller.md` — Crafty Controller setup, migration from itzg, API notes, pitfalls
 - `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
+- `references/minecraft-atm10-sky.md` — working ATM10 To The Sky deploy config with resource reqs, startup times, verification commands
 - `references/minecraft-plugins.md` — switching to Paper/Purpur for plugins, plugin repos, version checking
 - `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)
 - `references/tailscale-reachability.md` — what's reachable via Tailscale IP + port vs what needs Caddy, and how to check with `ss -tlnp`
