@@ -205,6 +205,25 @@ This applies to both dotenv files and plain text files (like `cf_api_key.txt`). 
 
 Running `docker compose config` with decrypted env files present prints all resolved secrets to stdout. Always clean up plaintext files before validation, or use a temporary directory.
 
+### ⚠️ PITFALL: `docker compose restart` breaks when volume-mounted secrets are cleaned up
+
+After `deploy.sh` runs `cleanup_secrets`, decrypted files like `secrets/cf_api_key.txt` are deleted. If you then run `docker compose restart <service>`, Docker tries to re-bind the volume mount and the host file no longer exists — the restart fails with `not a directory: Are you trying to mount a directory onto a file`.
+
+**Root cause:** `docker compose restart` re-creates the container in-place, which re-executes volume binds. Missing host files cause the `runc` layer to reject the mount. This affects any service with `CF_API_KEY_FILE` or other volume-mounted secret files.
+
+**Fix:** Re-decrypt the secret files before restarting:
+
+```bash
+~/.local/bin/sops --decrypt secrets/cf_api_key.txt.sops > secrets/cf_api_key.txt
+chmod 600 secrets/cf_api_key.txt
+# If service also uses env_file secrets:
+~/.local/bin/sops --input-type dotenv --output-type dotenv --decrypt secrets/mc.env.sops > secrets/mc.env
+chmod 600 secrets/mc.env
+docker compose up -d <service>   # prefer 'up -d' over 'restart' after re-decrypt
+```
+
+**Prevention:** Always use `docker compose up -d` rather than `restart` when volume-mounted secrets are involved — `up -d` doesn't require pre-existing bind-mount files if the container config hasn't changed. But for safety, re-decrypt first.
+
 ### ⚠️ PITFALL: Corrupted env file from failed SOPS decryption
 
 When a `.sops` file fails to decrypt (wrong key, corrupted ciphertext, format mismatch), SOPS writes the **error message** to stdout. If that stdout was redirected to the output env file (e.g. `sops --decrypt secrets/x.env.sops > secrets/x.env`), Docker Compose parses the error message as dotenv. Symptom: `failed to read .../x.env: line 1: key cannot contain a space` or similar cryptic env-parsing errors.
@@ -1488,7 +1507,7 @@ See `templates/backup-minecraft.sh` for the latest working version.
 
 | Variable | Purpose |
 |---|---|
-| `CF_SLUG` | Short identifier from the modpack URL (e.g. `integrated-minecraft`) |
+| `CF_SLUG` | Short identifier from the modpack URL (e.g. `all-the-mods-10-sky`) |
 | `CF_PAGE_URL` | Full CurseForge modpack page URL |
 | `CF_FILE_ID` | Pin to a specific file version |
 | `CF_FILENAME_MATCHER` | Substring match to pin a version (e.g. `1.0.7`) |
@@ -1496,6 +1515,7 @@ See `templates/backup-minecraft.sh` for the latest working version.
 | `CF_OVERRIDES_EXCLUSIONS` | Ant-style paths to exclude from overrides extraction |
 | `CF_PARALLEL_DOWNLOADS` | Parallel mod downloads (default: 4) |
 | `CF_FORCE_SYNCHRONIZE` | Force full re-download of all mods/overrides. Set `"true"` when switching modpacks on an existing data directory |
+| `ALLOW_FLIGHT` | Sets `allow-flight=true` in server.properties. Essential for skyblock modpacks where players fall into the void and need to fly back without getting kicked. Requires `OVERRIDE_SERVER_PROPERTIES=true` (the default) — delete `server.properties` first so the env var takes effect. |
 
 See `references/linux-hardware-inspection.md` for the full workflow.
 
