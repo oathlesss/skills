@@ -5,7 +5,10 @@ triggers:
   - User asks to research multiple topics simultaneously
   - Research task has 2+ independent subtopics (e.g. "find X for A and Y for B")
   - Need fresh web data that training cutoff can't provide
-  - User asks "research X" with broad scope
+  - 'User asks "research X" with broad scope'
+  - Comparing LLM models, pricing, or benchmarks
+  - "What's the best model for [task]?"
+  - LLM pricing comparison or model benchmark leaderboard
 ---
 
 # Parallel Research via Delegate Task
@@ -82,6 +85,15 @@ Present the combined findings concisely. Don't dump raw reports — extract the 
   - **Reddit**: search for community threads — pinned guides, tips megathreads, "things I wish I knew" posts, "share your tips" exchanges. Use `site:reddit.com/r/<subreddit>` in queries
   - **Wikis/official docs**: target specific wiki pages, not just general modpack description pages
   If the first compilation wave produces a guide that's mostly cross-referenced wiki summaries, it's too shallow. Do a second wave targeting community sources by name. A good litmus test: would someone watching Pilpoh's playthrough find strategies in your guide that a wiki-only reader wouldn't know? If not, go deeper.
+
+## Specialized Research Recipes
+
+Some research tasks have enough domain-specific workflow that they warrant dedicated reference files:
+
+- **LLM model comparison** — `references/llm-model-comparison-recipe.md` — full 4-phase workflow: OpenRouter pricing API → subagent benchmark gathering → tiered compilation → delivery. Covers pitfalls, verification criteria, and output conventions.
+- **LLM comparison output format** — `references/llm-model-comparison-output-example.md` — expected tier structure, table formatting conventions, Discord-optimized display patterns.
+
+These recipes follow the general parallel-research workflow (decompose → delegate → review → synthesize) but add domain-specific steps.
 
 ## Support files
 
