@@ -1,0 +1,495 @@
+{
+  "jobs": [
+    {
+      "id": "efb9eb4657fd",
+      "name": "Push Discord Gateway health to Uptime Kuma",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "push-gateway-status.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 1,
+        "display": "every 1m"
+      },
+      "schedule_display": "every 1m",
+      "repeat": {
+        "times": null,
+        "completed": 34116
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-17T09:58:22.280101+00:00",
+      "next_run_at": "2026-08-03T20:06:05.082630+00:00",
+      "last_run_at": "2026-08-03T20:05:05.082630+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1516740286020190251",
+        "chat_name": "Hermes / #home / I have uptime-kuma for status monitoring, what are some things we could monit...",
+        "thread_id": "1516740286020190251"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "51fffa3109bb",
+      "name": "Push Hermes Agent health to Uptime Kuma",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "push-hermes-status.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 1,
+        "display": "every 1m"
+      },
+      "schedule_display": "every 1m",
+      "repeat": {
+        "times": null,
+        "completed": 34115
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-17T09:58:23.286313+00:00",
+      "next_run_at": "2026-08-03T20:07:05.420572+00:00",
+      "last_run_at": "2026-08-03T20:06:05.420572+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1516740286020190251",
+        "chat_name": "Hermes / #home / I have uptime-kuma for status monitoring, what are some things we could monit...",
+        "thread_id": "1516740286020190251"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "f52e90c1cf68",
+      "name": "Skills Sync \u2192 GitHub",
+      "prompt": "Run the skills sync script: bash ~/.hermes/scripts/sync-skills.sh\nReport the output \u2014 whether skills were synced or no changes were found.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 720,
+        "display": "every 720m"
+      },
+      "schedule_display": "every 720m",
+      "repeat": {
+        "times": null,
+        "completed": 94
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-17T10:51:34.660853+00:00",
+      "next_run_at": "2026-08-03T23:47:57.467611+00:00",
+      "last_run_at": "2026-08-03T11:47:57.467611+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1516753933337628743",
+        "chat_name": "Hermes / #home / Look at the following markdown file: https://github.com/oathlesss/home-server...",
+        "thread_id": "1516753933337628743"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "3d1a77ecfe19",
+      "name": "Memory Hygiene Audit",
+      "prompt": "Load the memory-hygiene skill and perform a full memory audit. Compact stale, duplicate, or verbose entries in both MEMORY.md and USER.md. Report what was cleaned \u2014 entries removed, entries compacted, characters saved.",
+      "skills": [
+        "memory-hygiene"
+      ],
+      "skill": "memory-hygiene",
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 * * 0",
+        "display": "0 9 * * 0"
+      },
+      "schedule_display": "0 9 * * 0",
+      "repeat": {
+        "times": null,
+        "completed": 7
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-17T10:51:55.047149+00:00",
+      "next_run_at": "2026-08-09T09:00:00+00:00",
+      "last_run_at": "2026-08-02T09:01:58.225434+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1516753933337628743",
+        "chat_name": "Hermes / #home / Look at the following markdown file: https://github.com/oathlesss/home-server...",
+        "thread_id": "1516753933337628743"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "91128dcd5dfa",
+      "name": "Session Archive + Prune",
+      "prompt": "Run the session archive script: bash ~/.hermes/scripts/archive-sessions.sh\nReport the output \u2014 how many sessions archived, how many kept, vacuum result.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 3 1 * *",
+        "display": "0 3 1 * *"
+      },
+      "schedule_display": "0 3 1 * *",
+      "repeat": {
+        "times": null,
+        "completed": 2
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-17T10:52:42.764768+00:00",
+      "next_run_at": "2026-09-01T03:00:00+00:00",
+      "last_run_at": "2026-08-01T03:01:11.855005+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1516753933337628743",
+        "chat_name": "Hermes / #home / Look at the following markdown file: https://github.com/oathlesss/home-server...",
+        "thread_id": "1516753933337628743"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "2e164fee3899",
+      "name": "Nightly Notes Curator",
+      "prompt": "You are the Nightly Notes Curator. Maintain Ruben's knowledge base at /home/ruben/obsidian-vault/.\n\nVAULT STRUCTURE (two-stage pipeline):\n- inbox/ \u2014 Quick, raw notes. Rough drafts, active projects, recently captured ideas. DEFAULT location.\n- archive/ \u2014 Structured, polished notes with [[WikiLinks]] connecting to related notes. The finished product. (This IS the \"outbox\" \u2014 ZenNotes just calls it archive.)\n- trash/ \u2014 Obsolete/superseded notes (never delete, just move here with explanation).\n\nFLOW: inbox (raw) \u2192 archive/ (structured + linked). A note graduates from inbox to archive only when it's properly structured AND has meaningful [[WikiLinks]] to other notes.\n\nEach note needs YAML frontmatter: tags (array) and created (date).\n---\ntags: [topic, subtopic]\ncreated: 2026-06-18\n---\n\nCRITICAL: inbox/ is the DEFAULT. New notes ALWAYS go to inbox/. Only graduate to archive/ when a note is truly structured and linked. When in doubt, leave it in inbox/.\n\n## TASKS (in order)\n\n### 1. GATHER CONTEXT\n\n#### 1a. Hermes sessions (last 24h)\nUse session_search() to find recent sessions. Extract: new projects, technical decisions, problems solved, tool configs, skills created/modified, patterns established.\n\n#### 1b. Git activity (last 24h)\nCheck repos: /home/ruben/project-arachne and /home/ruben/.hermes/skills\nRun: git log --oneline --since=\"24 hours ago\"\n\n### 2. PROCESS INBOX NOTES\n\nRead every .md in inbox/. For each:\n\n**Structure check:**\n- Add YAML frontmatter with tags if missing\n- Improve title if unclear\n- Fix typos and formatting\n- Add section headers to walls of text\n\n**Linking (most important step):**\n- Scan ALL notes in archive/ AND inbox/ for related topics\n- Add [[WikiLinks]] to related notes wherever content overlaps\n- Link new notes into existing knowledge graph\n\n**Graduation to archive/ \u2014 ONLY when ALL are true:**\n1. The note has proper frontmatter, clear structure, no obvious issues\n2. The note has at least 2 [[WikiLinks]] to other notes\n3. The topic is stable enough (not a rapidly-changing active project plan)\n4. The note is at least 3 days old\n\nMissing any criterion = stays in inbox/. Most nights you should graduate 0-1 notes.\n\n**Trash:** Only if clearly obsolete. Add comment explaining why.\n\n### 3. CREATE NEW NOTES FROM SESSIONS\n\nFrom session_search() results, create new notes IN INBOX/ when:\n- New project/initiative discussed and not documented\n- Significant technical decision made\n- Reusable pattern/workflow emerged\n- Tool configured with non-obvious steps\n\nAlways: proper frontmatter + at least 1-2 [[WikiLinks]] to existing notes.\n\n### 4. UPDATE EXISTING NOTES FROM GIT\n\nFrom git logs:\n- Significant project-arachne commits \u2192 update the Project Arachne note with brief \"Recent Activity\"\n- Skills repo changes \u2192 update the Hermes Agent note with new/changed skills\n- Check both inbox/ and archive/ for these notes\n\n### 5. FINAL SUMMARY\n\nReport:\n- Inbox notes processed (frontmatter added, links added, fixes made)\n- Notes graduated from inbox/ \u2192 archive/ (and why \u2014 list which criteria were met)\n- New notes created in inbox/\n- Notes updated with git activity\n- Anything needing human attention\n\nRULES:\n- inbox/ is DEFAULT \u2014 be conservative about graduating\n- Never delete content \u2014 only trash/ with explanation\n- New notes ALWAYS go to inbox/ first\n- [[WikiLinks]] are required to graduate \u2014 no links = not ready\n- Graduating more than 2 notes in one run is a warning sign",
+      "skills": [
+        "ponytail"
+      ],
+      "skill": "ponytail",
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 2 * * *",
+        "display": "0 2 * * *"
+      },
+      "schedule_display": "0 2 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 47
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-18T09:57:19.178790+00:00",
+      "next_run_at": "2026-08-04T02:00:00+00:00",
+      "last_run_at": "2026-08-03T02:09:41.416042+00:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: [Errno 32] Broken pipe",
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1517105673937096745",
+        "chat_name": "Hermes / #home / Create a cronjob that goes through my notes every night and updates, and stru...",
+        "thread_id": "1517105673937096745"
+      },
+      "enabled_toolsets": [
+        "file",
+        "terminal",
+        "session_search"
+      ],
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "bc4cf3f7e112",
+      "name": "Minecraft World Backups",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "backup-minecraft.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * *",
+        "display": "0 4 * * *"
+      },
+      "schedule_display": "0 4 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 41
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-23T13:11:27.150531+00:00",
+      "next_run_at": "2026-08-04T04:00:00+00:00",
+      "last_run_at": "2026-08-03T04:00:36.901531+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1518963262497095750",
+        "chat_name": "Hermes / #home / Do you have any ideas for cronjobs or other improvements we can make?",
+        "thread_id": "1518963262497095750"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "940739731734",
+      "name": "Disk Space Watchdog \u2192 Uptime Kuma",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "push-disk-space.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 1,
+        "display": "every 1m"
+      },
+      "schedule_display": "every 1m",
+      "repeat": {
+        "times": null,
+        "completed": 29915
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-23T13:11:28.155688+00:00",
+      "next_run_at": "2026-08-03T20:06:04.588730+00:00",
+      "last_run_at": "2026-08-03T20:05:04.588730+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1518963262497095750",
+        "chat_name": "Hermes / #home / Do you have any ideas for cronjobs or other improvements we can make?",
+        "thread_id": "1518963262497095750"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "415c7f4e8030",
+      "name": "Monthly Docker Prune",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "docker-prune.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 3 1 * *",
+        "display": "0 3 1 * *"
+      },
+      "schedule_display": "0 3 1 * *",
+      "repeat": {
+        "times": null,
+        "completed": 2
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-23T13:11:49.826385+00:00",
+      "next_run_at": "2026-09-01T03:00:00+00:00",
+      "last_run_at": "2026-08-01T03:00:16.022644+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1518963262497095750",
+        "chat_name": "Hermes / #home / Do you have any ideas for cronjobs or other improvements we can make?",
+        "thread_id": "1518963262497095750"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "c77dd913a695",
+      "name": "Docker Image Update Report",
+      "prompt": "Check for Docker image updates on the homelab at /home/ruben/homeserver and report results concisely.\n\n1. Run: cd /home/ruben/homeserver && docker compose images --format 'table {{.Repository}}:{{.Tag}}\\t{{.ID}}' to capture current image IDs\n2. Run: docker compose pull 2>&1 to check for updates (this downloads newer images if available, but does NOT restart containers)\n3. If any images were updated, list them: which service, old tag, new tag pulled\n4. If nothing was updated, just say \"All images up to date.\"\n\nFormat the report for Discord \u2014 keep it short. Only report something meaningful \u2014 don't say \"checking...\" or list every service. Just: what was updated, or \"all current.\"\n\nIMPORTANT: Do NOT run `docker compose up -d` \u2014 just report. The user decides when to restart services.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 * * 1",
+        "display": "0 9 * * 1"
+      },
+      "schedule_display": "0 9 * * 1",
+      "repeat": {
+        "times": null,
+        "completed": 6
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-23T13:11:50.834932+00:00",
+      "next_run_at": "2026-08-10T09:00:00+00:00",
+      "last_run_at": "2026-08-03T09:09:23.650386+00:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1518963262497095750",
+        "chat_name": "Hermes / #home / Do you have any ideas for cronjobs or other improvements we can make?",
+        "thread_id": "1518963262497095750"
+      },
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": null,
+      "profile": null
+    },
+    {
+      "id": "7852c13dd74b",
+      "name": "Session Summarizer",
+      "prompt": "You are summarizing inactive Discord sessions into ZenNotes with related-note linking. Work through these steps exactly:\n\n## Step 1: Find inactive sessions\n\nRun this Python query via terminal to find Discord sessions with last message > 2 hours ago that haven't been summarized yet:\n\n```python\npython3 -c \"\nimport sqlite3, os\n\nDB = '/home/ruben/.hermes/state.db'\nTRACKING = '/home/ruben/.hermes/cron/session-summarizer/processed.txt'\n\nprocessed = set()\nif os.path.exists(TRACKING):\n    with open(TRACKING) as f:\n        processed = {line.strip() for line in f if line.strip()}\n\ndb = sqlite3.connect(DB)\n\nrows = db.execute('''\n    SELECT s.id, s.title, s.started_at, s.source, s.message_count,\n           (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) as last_ts\n    FROM sessions s\n    WHERE s.source = 'discord'\n      AND s.archived = 0\n      AND s.message_count >= 3\n      AND (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) IS NOT NULL\n      AND (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) < (unixepoch() - 7200)\n    ORDER BY last_ts DESC\n    LIMIT 5\n''').fetchall()\n\nqualified = [(r[0], r[1], r[4], r[5]) for r in rows if r[0] not in processed]\n\nif not qualified:\n    print('NO_SESSIONS')\nelse:\n    for sid, title, msg_count, last_ts in qualified:\n        print(f'{sid}|{title or \\\"Untitled\\\"}|{msg_count}|{last_ts}')\n\ndb.close()\n\"\n```\n\nIf output is NO_SESSIONS, respond \"No inactive sessions to summarize.\" and stop.\n\n## Step 2: For each qualifying session, read and summarize\n\nFor each session ID returned, read the full session content using session_search:\n`session_search(session_id=\"<session_id>\")`\n\nThen generate a summary with this structure:\n\n---\ntags: [session-summary]\ncreated: YYYY-MM-DD\nsource: discord\nsession_id: <session_id>\n---\n\n# Session-YYYY-MM-DD-HH-MM \u2014 <descriptive slug>\n\n**Title:** <session title or descriptive title based on content>\n**Messages:** <message count>\n\n## Summary\n<2-4 sentences capturing what the session was about>\n\n## Key Points\n- <3-6 bullet points>\n\nWrite to: `/home/ruben/obsidian-vault/inbox/Session-YYYY-MM-DD-HH-MM-<topic-slug>.md`\n\nUse the session's last_active timestamp (converted from Unix) for the filename date. Add a short hyphenated topic slug to the filename.\n\n## Step 3: Add related-note links\n\nAfter writing the note, find related existing notes in the vault. Run this to list all note titles:\n\n```bash\npython3 -c \"\nimport os, re\nvault = '/home/ruben/obsidian-vault'\nfor folder in ['inbox', 'outbox']:\n    p = os.path.join(vault, folder)\n    if os.path.isdir(p):\n        for f in sorted(os.listdir(p)):\n            if f.endswith('.md'):\n                with open(os.path.join(p,f)) as fh:\n                    content = fh.read(500)\n                title = re.search(r'^#\\s+(.+)$', content, re.MULTILINE)\n                tags = re.findall(r'tags:\\s*\\[(.*?)\\]', content)\n                title_str = title.group(1) if title else f.replace('.md','')\n                print(f'{f}|{title_str}|{tags[0] if tags else \\\"\\\"}'  )\n\"\n```\n\nCompare the session topic against note titles/tags. When a note is clearly related (same topic domain, overlapping subject), add a `## Related` section at the bottom of the session note with WikiLinks:\n\n```markdown\n## Related\n- [[Note Title]] \u2014 brief reason for relation\n```\n\nOnly add links that have a genuine topical connection \u2014 don't force links. If no related notes exist, omit the section entirely.\n\nUse the `patch` tool to insert the `## Related` section at the end of the file.\n\n## Step 4: Track processed sessions\n\nAfter successfully writing and linking each note, append the session ID to:\n`/home/ruben/.hermes/cron/session-summarizer/processed.txt`\n\n```bash\necho \"<session_id>\" >> /home/ruben/.hermes/cron/session-summarizer/processed.txt\n```\n\n## Important\n\n- Process at most 5 sessions per run\n- Skip sessions with fewer than 3 messages\n- If a session was already in processed.txt, skip it\n- Each note MUST have a `## Related` section with at least 1 link if related notes exist\n- Use `[[Note Title]]` format for WikiLinks \u2014 exactly as they appear in the vault\n- Respond with a brief report: \"Summarized N sessions: [filenames] with M links\"",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 1 * * *",
+        "display": "0 1 * * *"
+      },
+      "schedule_display": "0 1 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 87
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-24T08:04:01.779473+00:00",
+      "next_run_at": "2026-08-04T01:00:00+00:00",
+      "last_run_at": "2026-08-03T01:09:40.143995+00:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: [Errno 32] Broken pipe",
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1519248657193631744",
+        "chat_name": "Hermes / #home / I want a cronjob that goes through sessions that have been inactive for more ...",
+        "thread_id": "1519248657193631744"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file",
+        "session_search"
+      ],
+      "workdir": null,
+      "profile": null
+    }
+  ],
+  "updated_at": "2026-08-03T20:06:05.420685+00:00"
+}
