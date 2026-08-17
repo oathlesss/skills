@@ -505,7 +505,7 @@ Follow this sequence when adding a service to the stack:
 5. **Add Uptime Kuma monitor** — insert directly into SQLite (see `references/uptime-kuma-monitors.md`), then restart Uptime Kuma
 6. **Verify** with `curl -sk https://<domain>/`
 
-**For full-stack web apps** (Go backend + Vue/React frontend): see the **`fullstack-web-deploy`** skill for project scaffolding, multi-stage Dockerfiles, Go embed patterns, Vite proxy, and Tailwind theme setup. The docker-homeserver checklist above covers the homelab integration; `fullstack-web-deploy` covers the build pipeline.
+**For full-stack web apps** (Go backend + Vue/React frontend): see the **`go-vue-fullstack`** skill for project scaffolding, multi-stage Dockerfiles, Go embed patterns, Vite proxy, and Tailwind theme setup. The docker-homeserver checklist above covers the homelab integration; `go-vue-fullstack` covers the build pipeline.
 
 See `references/service-catalog.md` for deployed service configs and gotchas.
 
@@ -1680,4 +1680,3 @@ dockge:
 - `references/tailscale-reachability.md` — what's reachable via Tailscale IP + port vs what needs Caddy, and how to check with `ss -tlnp`
 - `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers
 - `references/homepage-forgejo-dockge-dozzle.md` — Homepage, Forgejo, Dockge, and Dozzle: Compose snippets, Caddy entries, ports, resource usage, and verification
-- `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers

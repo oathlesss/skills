@@ -1,3 +1,4 @@
 .curator_state
+.curator_backups/
 .usage.json
 .usage.json.lock
