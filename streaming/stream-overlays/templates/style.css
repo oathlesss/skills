@@ -1,0 +1,189 @@
+/* ============================================================
+   Stream Overlay — style.css
+   One accent color drives the whole theme. Change it here.
+   ============================================================ */
+
+:root {
+  --accent: #ffb800;          /* amber gold — change to taste */
+  --accent-dim: rgba(255, 184, 0, 0.35);
+  --bg: rgba(10, 12, 16, 0.82);
+  --bg-solid: #0a0c10;
+  --text: #f5f6f8;
+  --text-dim: #a8adb8;
+  --font: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  --radius: 12px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--font);
+  color: var(--text);
+}
+
+/* ---------- Now Playing (top-left) ---------- */
+.now-playing {
+  position: absolute;
+  top: 40px;
+  left: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  background: var(--bg);
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+}
+
+.live-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent-dim);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 var(--accent-dim); }
+  70%  { box-shadow: 0 0 0 10px rgba(255, 184, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 184, 0, 0); }
+}
+
+/* ---------- Webcam (bottom-left) ---------- */
+.webcam {
+  position: absolute;
+  left: 40px;
+  bottom: 40px;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.webcam-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+
+.webcam-placeholder {
+  font-size: 16px;
+  letter-spacing: 4px;
+  color: var(--text-dim);
+}
+
+/* Point your OBS webcam at this in a higher layer, or replace
+   .webcam-video with the camera via your scene setup. */
+
+.nameplate {
+  margin-top: 8px;
+  padding: 8px 16px;
+  background: linear-gradient(90deg, var(--accent), rgba(255,184,0,0.15));
+  border-radius: 8px;
+  align-self: flex-start;
+  font-weight: 700;
+  font-size: 18px;
+  color: #1a1a1a;
+}
+
+.nameplate-handle { color: var(--bg-solid); }
+
+/* ---------- Social bar (bottom-right) ---------- */
+.socials {
+  position: absolute;
+  right: 40px;
+  bottom: 40px;
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-radius: 999px;
+  border: 1px solid var(--accent-dim);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+}
+
+.social {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.social:hover {
+  background: var(--accent-dim);
+  transform: translateY(-2px);
+}
+
+.social svg {
+  width: 20px;
+  height: 20px;
+  fill: var(--text);
+}
+
+.social:hover svg { fill: var(--accent); }
+
+/* ---------- Alert (centered) ---------- */
+.alert {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.alert.show { animation: alertIn 5s ease forwards; }
+
+@keyframes alertIn {
+  0%   { opacity: 0; }
+  6%   { opacity: 1; }
+  12%  { opacity: 1; transform: translateY(0); }
+  90%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-20px); }
+}
+
+.alert-box {
+  min-width: 320px;
+  max-width: 640px;
+  padding: 22px 36px;
+  text-align: center;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: 0 0 0 4px rgba(0,0,0,0.2), 0 12px 40px rgba(0,0,0,0.5);
+}
+
+.alert-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+.alert-message {
+  margin-top: 8px;
+  font-size: 20px;
+  color: var(--text);
+}

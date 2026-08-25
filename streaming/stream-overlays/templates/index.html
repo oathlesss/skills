@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oathless — Stream Overlay</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Now Playing pill (top-left) -->
+  <div id="now-playing" class="now-playing">
+    <span class="live-dot"></span>
+    <span id="game-name">Minecraft</span>
+  </div>
+
+  <!-- Webcam frame (bottom-left) -->
+  <div id="webcam" class="webcam">
+    <div class="webcam-video">
+      <span class="webcam-placeholder">WEBCAM</span>
+    </div>
+    <div class="nameplate">
+      <span class="nameplate-handle">@Oathless</span>
+    </div>
+  </div>
+
+  <!-- Social bar (bottom-right) -->
+  <div id="socials" class="socials">
+    <a class="social" title="Twitch" href="https://twitch.tv/Oathless" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 4 4 1.5h17L22.5 4v13.5L17 23h-4l-2.5 1.5h-4L3 20.5V4zm4 0v12h13V4h-13zm3 2.5h2.5v6h-2.5v-6zm5 0H17v6h-2.5v-6z"/></svg>
+    </a>
+    <a class="social" title="X" href="https://x.com/Oathless" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 3h3l-6.6 7.5L21.5 21h-6l-4.7-6.1L5.4 21h-3l7-8L2.5 3h6.2l4.3 5.6L17.5 3zm-1 16h1.7L7.6 4.8H5.8L16.5 19z"/></svg>
+    </a>
+    <a class="social" title="YouTube" href="https://youtube.com/@Oathless" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23 7.5s-.2-1.6-.9-2.3c-.9-.9-1.9-.9-2.3-1C16.6 4 12 4 12 4s-4.6 0-7.8.2c-.4.1-1.4.1-2.3 1C1.2 5.9 1 7.5 1 7.5S.8 9.4.8 11.3v1.4c0 1.9.2 3.8.2 3.8s.2 1.6.9 2.3c.9.9 2 .9 2.5 1 1.8.2 7.6.2 7.6.2s4.6 0 7.8-.2c.4-.1 1.4-.1 2.3-1 .7-.7.9-2.3.9-2.3s.2-1.9.2-3.8v-1.4c0-1.9-.2-3.8-.2-3.8zM9.8 15.3V8.7l6 3.3-6 3.3z"/></svg>
+    </a>
+    <a class="social" title="Discord" href="https://discord.gg/Oathless" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4.3A18.8 18.8 0 0 0 15.4 3l-.6 1.2a16.6 16.6 0 0 0-5.6 0L8.6 3A18.8 18.8 0 0 0 4 4.3 19.6 19.6 0 0 0 1.4 16.6 18.8 18.8 0 0 0 6.9 19l1.1-1.8a12 12 0 0 1-1.9-.9l.5-.4a13.4 13.4 0 0 0 11.4 0l.5.4a12 12 0 0 1-1.9.9L17.7 19a18.8 18.8 0 0 0 5.5-2.4A19.6 19.6 0 0 0 20 4.3zM9 14.6c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2zm6.6 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2z"/></svg>
+    </a>
+  </div>
+
+  <!-- Alert (centered, hidden until triggered) -->
+  <div id="alert" class="alert">
+    <div class="alert-box">
+      <div id="alert-title" class="alert-title">New Follower</div>
+      <div id="alert-message" class="alert-message">Thanks for the follow!</div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

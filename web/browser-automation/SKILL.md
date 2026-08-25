@@ -27,6 +27,31 @@ On a fresh Ubuntu server, Chrome for Testing will fail with:
 `error while loading shared libraries: libatk-1.0.so.0: cannot open shared object file`
 This is NOT an agent-browser bug — headless Chrome needs the GTK/X11/NSS libraries. This is the **one step that requires the user** (sudo needs their password; never ask for it — hand them the one-liner). Exact apt package list: `references/linux-deps.md`.
 
+## PITFALL #2: after libs install, Chrome hits "No usable sandbox"
+On Ubuntu with AppArmor restricting unprivileged user namespaces, headless Chrome
+fails with `FATAL: ... No usable sandbox!` even after the GTK libs are installed.
+Fix: launch Chrome with `--no-sandbox`. agent-browser passes browser args via the
+**global** `--args` flag (comma-separated, placed BEFORE the subcommand):
+
+```bash
+agent-browser --args "--no-sandbox,--disable-gpu" open <url>
+```
+
+More robust options (survive daemon restarts):
+```bash
+export AGENT_BROWSER_ARGS="--no-sandbox,--disable-gpu"
+# or ~/.agent-browser/config.json → {"args": "--no-sandbox,--disable-gpu"}
+```
+(`~/.agent-browser/config.json` is already written on this box.)
+
+**Daemon gotcha:** agent-browser keeps a daemon alive between commands. `--args`
+is silently IGNORED if a daemon is already running ("⚠ --args ignored: daemon
+already running"). Kill it first: `agent-browser close --all`, then launch fresh.
+Also, `open` with NO URL is flaky for sandbox — always pass the URL directly.
+
+**Viewport gotcha:** default viewport is 1280×577, NOT 1920×1080. Set it explicitly
+after loading the page: `agent-browser set viewport 1920 1080`.
+
 ## Core workflow (ref-based)
 ```bash
 agent-browser open <url>              # launch + navigate (aliases: goto, navigate)
