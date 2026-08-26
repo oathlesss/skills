@@ -48,8 +48,11 @@ Ruben's projects use the remote name **`forgejo`** (NOT `origin`) — e.g. the
 `oathless-terminal` repo has remote `forgejo`. Match that convention:
 
 ```bash
-git remote add forgejo https://git.oathless.dev/oathless/repo-name.git
-git push -u forgejo main
+# NOTE: existing repos on this instance use the remote name `forgejo` (NOT `origin`).
+# Auto-detect the convention so you match it:
+REMOTE=$(git remote | head -1); [ -z "$REMOTE" ] && REMOTE=forgejo
+git remote add "$REMOTE" https://git.oathless.dev/oathless/repo-name.git
+git push -u "$REMOTE" main
 ```
 
 To auto-match an existing project's remote name:

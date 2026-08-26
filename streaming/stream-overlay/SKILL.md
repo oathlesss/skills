@@ -30,9 +30,16 @@ OBS Local File points at a filesystem path, NOT a URL — `?accent=...` never re
 ## Design rules (Ruben's preferences)
 - 4K native (3840×2160); OBS scales down to 1080p output cleanly.
 - Webcam frame OFF by default, toggleable (`cam: true` in config / `?cam=1`). Ruben has no cam yet.
-- Every widget toggleable via `config.js` `show: { nowPlaying, latestFollower, chat, socials }`.
+- Every widget toggleable via `config.js` `show: { nowPlaying, latestFollower, chat, goal, socials }`. Feature toggles too: `mythical`, `cam`, `goal`, `sound`.
 - **Socials MUST show handle text + icon, not logos alone** — a bare Twitch logo tells a viewer nothing. Ruben called this out directly ("why even have the social logos there").
-- Minimal/decorative-lean: Ruben questions the value of anything non-functional.
+- Minimal/decorative-lean: Ruben questions the value of anything non-functional ("why even have them there").
+- **Avoid the "template" look** — this is what makes him say "this feels off": system fonts (Segoe UI/Inter), dead-center symmetric layouts, and the accent color scattered everywhere all read as cheap. Use a real display font (Cinzel / Montserrat / Bebas Neue), ONE strong focal point, and restraint with the accent color.
+- **Stop tweaking when a design "feels off" after one round.** Offer 2–4 genuinely distinct directions (different font + layout + palette) rendered side-by-side and let him pick — do not keep guessing with incremental tweaks.
+
+## More pitfalls
+- **Alert sound needs "Control audio via OBS"** ticked on the browser source, or the chime never reaches the stream mixer.
+- **Anchor tags render with a default blue underline** in OBS — always `text-decoration: none` on `.social` / link styling.
+- **Custom fonts must be self-hosted** (`@font-face` with a downloaded `.woff2`) for offline reliability in OBS; Google Fonts `@import` works for agent-browser previews but breaks without internet.
 
 ## config.js shape
 ```js
@@ -40,11 +47,19 @@ window.OVERLAY_CONFIG = {
   accent: "ffb800",            // hex, no #
   game: "Minecraft",           // Now Playing label
   cam: false,                  // webcam frame
+  sound: true,                 // alert chime: true | "file.mp3" | false
+  mythical: true,              // silhouettes/animations on full-screen scenes (false = clean)
   handle: "@Oathless",
-  show: { nowPlaying: true, latestFollower: true, chat: true, socials: true },
+  nextStream: "",              // "next stream" line on the outro screen ("" = hidden)
+  show: { nowPlaying: true, latestFollower: true, chat: true, goal: true, socials: false },
+  goal: { label: "Follower Goal", current: 43, target: 100 },  // top-center goal bar
   socials: [{ name, url, handle }],   // icon auto-matched by name (Twitch/X/YouTube/Discord)
 };
 ```
+
+## Scenes (one file each, all `3840×2160` OBS sources)
+- `index.html` (in-game overlay) · `starting.html` · `brb.html` · `outro.html` ("Thanks for watching" + next-stream line) · `adbreak.html` · `tech.html`.
+- Full-screen scenes get optional mythical decorations (columns/lightning/particles) injected by JS when `mythical` is true — toggle off for the clean look.
 
 ## Data wiring (follower / sub / chat)
 - Overlay exposes a `postMessage` API: `{type:"follower",name}`, `{type:"sub",name,tier}`, `{type:"chat",user,message,color}`, `{type:"latest",name}`, or generic `{title,message}`.
