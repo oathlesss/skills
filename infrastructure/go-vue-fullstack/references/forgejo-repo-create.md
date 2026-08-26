@@ -44,12 +44,21 @@ fi
 
 ## Push
 
+Ruben's projects use the remote name **`forgejo`** (NOT `origin`) — e.g. the
+`oathless-terminal` repo has remote `forgejo`. Match that convention:
+
 ```bash
-git remote add origin https://git.oathless.dev/oathless/repo-name.git
-git push -u origin main
+git remote add forgejo https://git.oathless.dev/oathless/repo-name.git
+git push -u forgejo main
 ```
 
-If the repo already has a remote (`origin`), use `git remote set-url` instead of `add`.
+To auto-match an existing project's remote name:
+`git -C ~/<existing-project> remote | head -1`
+
+If a remote already exists, use `git remote set-url` instead of `add`.
+
+Auth header: use `Authorization: token $TOKEN` (Forgejo/Gitea style). `Bearer`
+also works but `token` is the documented form — pick one and stay consistent.
 
 ## ⚠️ PITFALL: Token redaction breaks multi-call patterns
 

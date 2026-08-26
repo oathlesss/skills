@@ -80,3 +80,22 @@ agent-browser --version
 agent-browser open example.com && agent-browser snapshot && agent-browser close
 ```
 If Chrome exits code 127 with a `shared libraries` error, the apt deps step hasn't run yet.
+
+For screenshotting many variants, runtime config checks via `eval`, and composing
+labeled comparison contact sheets (Pillow via uv — no ImageMagick), see
+`references/visual-verification.md`.
+
+## Visual comparison (contact sheets)
+When the task is "show me all the variants / compare these renders", screenshot each
+variant to its own file (change the URL param between runs, reuse the same daemon), then
+montage into ONE labeled contact sheet. ImageMagick is NOT installed on this box — use
+Pillow via `uv`:
+
+```bash
+uv run --with pillow python3 scripts/make_contact_sheet.py \
+  "Gold=/tmp/v1.png" "Purple=/tmp/v2.png" "Cyan=/tmp/v3.png" /tmp/sheet.png
+```
+
+Args are `label=path` pairs; a trailing bare `.png`/`.jpg` is the output path (default
+`/tmp/contact-sheet.png`). Tiles left-to-right at ~640px each with a label bar — compact
+enough to drop straight into chat. Script: `scripts/make_contact_sheet.py`.
