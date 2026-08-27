@@ -52,6 +52,22 @@ Also, `open` with NO URL is flaky for sandbox — always pass the URL directly.
 **Viewport gotcha:** default viewport is 1280×577, NOT 1920×1080. Set it explicitly
 after loading the page: `agent-browser set viewport 1920 1080`.
 
+**Scroll gotcha (SPA inner scroll containers):** `agent-browser scroll down <px>` scrolls the
+WINDOW, not an app's inner scroll container. Vue/React SPAs typically scroll a
+`<div class="overflow-y-auto">` (or similar) while `body`/`html` stays fixed — so `scroll`
+"✓ Done"s but the screenshot keeps showing the top, and below-the-fold sections (a match
+timeline, a footer table) never appear. Fix: scroll the container directly via eval, then
+screenshot:
+
+```bash
+agent-browser eval "document.querySelector('.overflow-y-auto').scrollTop = 99999"
+sleep 0.6
+agent-browser screenshot below-fold.png
+```
+
+Verify the scroll actually moved by checking the screenshot's byte size changed vs the
+pre-scroll one (identical size = nothing scrolled).
+
 ## Core workflow (ref-based)
 ```bash
 agent-browser open <url>              # launch + navigate (aliases: goto, navigate)

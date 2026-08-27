@@ -197,6 +197,13 @@ spa := handler.NewSPA()
 mux.HandleFunc("/", spa.Serve)
 ```
 
+**⚠️ PITFALL: register the SPA by its actual return type.** The two SPA patterns in this file return DIFFERENT types, and the `mux.HandleFunc("/", spa.Serve)` wiring only matches the dot-check pattern:
+- **file-existence pattern** returns `http.HandlerFunc` → use `mux.Handle("/", spa)`. `spa.Serve` does NOT exist on a `http.HandlerFunc` (`mux.HandleFunc("/", spa.Serve)` fails to compile: `spa.Serve undefined`).
+- **dot-check pattern** returns `*SPA` with a `Serve(w, r)` method → `mux.HandleFunc("/", spa.Serve)` is correct.
+
+Pick one pattern and use the matching registration line.
+```
+
 ### ⚠️ PITFALL: SPA handler return type must match the mux wiring
 
 The two SPA patterns above return **different types**, and mis-wiring them is a compile error:
