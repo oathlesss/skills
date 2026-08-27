@@ -17,7 +17,7 @@ description: Build, configure, and verify OBS browser-source stream overlays (HT
 
 ## Architecture (single source, per-scene files)
 - `config.js` — ALL user settings (accent, game, cam, handle, show flags, socials). This is what Ruben edits.
-- `index.html` / `starting.html` / `brb.html` — one file per OBS scene. Each sets `data-scene` on `<body>` and includes only its own scene markup + shared `<script src="config.js">` + `<script src="script.js">`.
+- One HTML file per OBS scene (see "Scenes" below). Each sets `data-scene` on `<body>` and includes only its own scene markup + shared `<script src="config.js">` + `<script src="script.js">`.
 - `script.js` — logic only (don't edit): reads `window.OVERLAY_CONFIG`, renders socials, applies accent, show/hide widgets, alerts, chat, Twitch IRC. Guard every DOM access (`if (has("id")) …`) because scene files don't all contain every element.
 - `style.css` — 4K theme. `--accent` CSS variable drives the whole color scheme; `--accent-dim` is its 0.35-alpha variant.
 
@@ -34,12 +34,15 @@ OBS Local File points at a filesystem path, NOT a URL — `?accent=...` never re
 - **Socials MUST show handle text + icon, not logos alone** — a bare Twitch logo tells a viewer nothing. Ruben called this out directly ("why even have the social logos there").
 - Minimal/decorative-lean: Ruben questions the value of anything non-functional ("why even have them there").
 - **Avoid the "template" look** — this is what makes him say "this feels off": system fonts (Segoe UI/Inter), dead-center symmetric layouts, and the accent color scattered everywhere all read as cheap. Use a real display font (Cinzel / Montserrat / Bebas Neue), ONE strong focal point, and restraint with the accent color.
+- **Chosen direction: broadcast/esports.** Ruben picked it from 4 rendered directions — Bebas Neue (condensed), navy + gold palette, a gold bolt mark above the title, "OATHLESS" wordmark top-left, "LIVE" top-right. Applied to all full-screen scenes (starting/brb/outro/adbreak/tech). In-game HUD stays sans-serif for legibility.
 - **Stop tweaking when a design "feels off" after one round.** Offer 2–4 genuinely distinct directions (different font + layout + palette) rendered side-by-side and let him pick — do not keep guessing with incremental tweaks.
 
 ## More pitfalls
 - **Alert sound needs "Control audio via OBS"** ticked on the browser source, or the chime never reaches the stream mixer.
 - **Anchor tags render with a default blue underline** in OBS — always `text-decoration: none` on `.social` / link styling.
-- **Custom fonts must be self-hosted** (`@font-face` with a downloaded `.woff2`) for offline reliability in OBS; Google Fonts `@import` works for agent-browser previews but breaks without internet.
+- **Custom fonts must be self-hosted for offline OBS** — embed the `.woff2` as a base64 data URI in `@font-face` (`src: url("data:font/woff2;base64,…")`), which also sidesteps `file://` font-loading quirks. Google Fonts `@import`/`<link>` works for agent-browser previews but breaks without internet.
+- **Google Fonts `css2` returns multiple unicode-range subsets** (`/* latin */`, `/* latin-ext */`, …). `curl … | grep … | head -1` grabs the FIRST block = `latin-ext`, which has NO basic ASCII glyphs → text silently falls back to the system font. Always take the `/* latin */` block (larger file, `U+0000-00FF` range).
+- **`document.fonts.check()` gives false confidence** — it returns true even when glyphs silently fall back. Verify a font actually rendered by measuring the element: a condensed font renders a far narrower `getBoundingClientRect().width` at the same `font-size` (ratio ~5 vs ~8.5 for a fallback sans). Measure via `agent-browser eval` and compare.
 
 ## config.js shape
 ```js
@@ -48,7 +51,7 @@ window.OVERLAY_CONFIG = {
   game: "Minecraft",           // Now Playing label
   cam: false,                  // webcam frame
   sound: true,                 // alert chime: true | "file.mp3" | false
-  mythical: true,              // silhouettes/animations on full-screen scenes (false = clean)
+  decor: true,                 // broadcast decorations on full-screen scenes (false = clean)
   handle: "@Oathless",
   nextStream: "",              // "next stream" line on the outro screen ("" = hidden)
   show: { nowPlaying: true, latestFollower: true, chat: true, goal: true, socials: false },
@@ -59,9 +62,10 @@ window.OVERLAY_CONFIG = {
 
 ## Scenes (one file each, all `3840×2160` OBS sources)
 - `index.html` (in-game overlay) · `starting.html` · `brb.html` · `outro.html` ("Thanks for watching" + next-stream line) · `adbreak.html` · `tech.html`.
-- Full-screen scenes get optional mythical decorations (columns/lightning/particles) injected by JS when `mythical` is true — toggle off for the clean look.
+- Full-screen scenes get optional broadcast decorations (bolt mark + `LIVE` + wordmark + floating particles) injected by JS when `decor` is true — toggle off for the clean look.
 
 ## Data wiring (follower / sub / chat)
+Full IRC protocol + EventSub + StreamElements + YouTube specifics: `references/twitch-wiring.md`.
 - Overlay exposes a `postMessage` API: `{type:"follower",name}`, `{type:"sub",name,tier}`, `{type:"chat",user,message,color}`, `{type:"latest",name}`, or generic `{title,message}`.
 - Followers/subs → StreamElements/Streamlabs "Custom Widget" forwarding into `postMessage`.
 - Chat → built-in Twitch IRC client (`wss://irc-ws.chat.twitch.tv:443`), gated by `channel`/`nick`/`chat_token` in config. `chat_token` is a SECRET — keep it out of public git.

@@ -68,6 +68,12 @@ agent-browser close
 - Traditional selectors still work as fallback: `agent-browser click "#submit"`, `agent-browser find role button click --name "Submit"`.
 - Full command surface: `references/agent-browser-commands.md`.
 
+### PITFALL: refs go stale after SPA re-render (state-based nav)
+
+In a state-based SPA (Vue/React view switching with `v-if`/`v-show`, no URL router), clicking a nav button re-renders the main content and rebuilds the accessibility tree, so every previously-snapshotted `@eN` ref becomes invalid — the next `click @eN` fails with `✗ Unknown ref: eN`. Always re-`snapshot` after any click that changes the view, then use the fresh refs.
+
+Related: state-based SPAs can't be deep-linked — to capture a specific view you must click through it (snapshot → click → re-snapshot), not `open http://host/#/view`. When screenshotting several views, re-snapshot between each and confirm the new view actually rendered (a change in screenshot byte size is a cheap sanity check).
+
 ## This user's environment
 - **npm global prefix is `~/.hermes/node`** → binary at `~/.hermes/node/bin/agent-browser`, which is NOT on the default PATH. Prepend: `export PATH="$HOME/.hermes/node/bin:$PATH"`.
 - Homelab is Ubuntu 26.04, headless OptiPlex 3070 Micro. `sudo` requires interactive auth → give Ruben the apt one-liner to run himself.

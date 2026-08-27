@@ -197,6 +197,21 @@ spa := handler.NewSPA()
 mux.HandleFunc("/", spa.Serve)
 ```
 
+### ⚠️ PITFALL: SPA handler return type must match the mux wiring
+
+The two SPA patterns above return **different types**, and mis-wiring them is a compile error:
+
+- **dot-check pattern** returns `*SPA` — a struct with a `Serve(w, r)` method. Register with `mux.HandleFunc("/", spa.Serve)` (or `mux.Handle("/", spa)`, since `*SPA` implements `http.Handler`).
+- **file-existence pattern** returns `http.HandlerFunc`, which has **no `.Serve` method**. Register with `mux.Handle("/", spa)`.
+
+Calling `mux.HandleFunc("/", spa.Serve)` on an `http.HandlerFunc` fails with:
+
+```
+spa.Serve undefined (type http.HandlerFunc has no field or method Serve)
+```
+
+Simplest rule that works for BOTH return types: always use `mux.Handle("/", spa)` — `http.HandlerFunc` and `*SPA` both satisfy `http.Handler`. (Hit this when using the recommended file-existence pattern but copying the dot-check wiring.)
+
 ## Go: Filesystem-Based SPA Serving (Alternative to Embed)
 
 Full code and Dockerfile requirements in `references/spa-filesystem-handler.md`.

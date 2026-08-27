@@ -56,6 +56,7 @@ Output a summary:
 
 ## Pitfalls
 
+- `memory(action='replace')` swaps the WHOLE entry, not a substring. `old_text` only *identifies* which entry to replace; `content` must be the complete replacement entry text. Passing a fragment as `content` clobbers the rest of that entry — e.g. "fixing" one project in a long `Projects:` line by passing only the changed tail silently drops every other project in the line. Always reconstruct and pass the full entry.
 - Don't remove entries just because they're old — age alone is not staleness
 - Don't compact user profile facts without preserving the user's voice
 - If uncertain whether a fact is still relevant, keep it
