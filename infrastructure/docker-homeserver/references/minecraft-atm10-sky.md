@@ -1,5 +1,7 @@
 # ATM10 To The Sky — Working Docker Config
 
+> **Superseded 2026-09-06:** server migrated to **ATM10 Aeronautics** (service `minecraft-atm10aero`, `CF_SLUG=all-the-mods-10-aeronautics`, NeoForge 1.21.1, ~437 mods). Config structure is identical — only the slug and the skyblock→overworld world type differ. Old skyblock world was wiped at migration.
+
 CurseForge modpack: skyblock variant of All the Mods 10, ~500 mods, NeoForge 1.21.1.
 
 ## Compose Service (working as of 2026-07-24)

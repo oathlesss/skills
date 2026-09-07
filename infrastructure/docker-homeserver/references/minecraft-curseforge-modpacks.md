@@ -417,6 +417,8 @@ curl -s -H "x-api-key: ${CF_KEY}" \
 
 # Download from edge CDN: https://edge.forgecdn.net/files/{fileID_first4}/{remaining_fileID}/{filename}
 # e.g. file ID 4585394 → https://edge.forgecdn.net/files/4585/394/status-effect-bars-1.0.3.jar
+# ⚠️ Preferred: GET /v1/mods/{id}/files/{fid}/download-url → {"data": "<direct CDN url>"}
+#    (the /download endpoint returns HTTP 404). See references/minecraft-add-mods.md.
 ```
 
 From Modrinth API (no auth required):

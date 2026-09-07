@@ -1222,6 +1222,16 @@ minecraft:
 
 **⚠️ PITFALL: World incompatibility.** Switching mod loader type or MC version will break existing worlds. Always back up `./minecraft/data/world/` before changing `TYPE` or `VERSION`.
 
+### Swapping Between Modpacks (replace one CurseForge pack with another)
+
+Full procedure in `references/minecraft-modpack-swap.md`. The three sharpest pitfalls when replacing a modpack on an existing itzg container:
+
+- **Remove the old container by name, not via compose.** After you rename the service in `docker-compose.yml`, `docker compose rm -f <old-service>` fails with "no such service" (compose no longer knows the old name). Use `docker rm -f <old-container-name>`.
+- **A stray `secrets/cf_api_key.txt` *directory* blocks re-decrypt.** When the plaintext key file was cleaned up and the container restarted, Docker creates a root-owned directory at the bind-mount path. `sops --decrypt ... > secrets/cf_api_key.txt` then fails (can't write to a directory). Remove it first via `docker run --rm -v /home/ruben/homeserver:/host alpine:latest rm -rf /host/secrets/cf_api_key.txt`.
+- **Root-owned parent data dir blocks `rm -rf`.** The data subdir may be user-owned while its parent dir is root-owned, so `rm -rf` fails with "Permission denied". Use the Alpine container to remove the whole tree.
+
+Both ATM10 variants (To The Sky, Aeronautics) are NeoForge 1.21.1 on `:java21`, so a swap is a pure slug + data-dir change.
+
 **⚠️ PITFALL: `server.properties` doesn't auto-update.** The itzg image generates `server.properties` on first run from environment variables — but once it exists, subsequent env var changes are **ignored**. When changing variables that affect `server.properties` (e.g. `ONLINE_MODE`, `RCON_PASSWORD`, `DIFFICULTY`), **delete the file first** before restarting:
 ```bash
 rm -f ./minecraft/data/server.properties
@@ -1265,6 +1275,24 @@ environment:
 ```
 
 Keep the raw key in a SOPS-encrypted text file (`secrets/cf_api_key.txt.sops`) alongside dotenv secrets. `deploy.sh` decrypts both formats. See `references/minecraft-curseforge-modpacks.md` for the full setup.
+
+### Adding Individual Mods to a CurseForge Server
+
+To add a mod that isn't in the modpack (e.g. an AE2 addon) without re-running the whole
+AUTO_CURSEFORGE install, fetch the jar via the CurseForge API and drop it in `/data/mods/`:
+
+1. **Decrypt the CF API key in-process** — never print it, never pass it on a shell command line.
+   Use `execute_code` (Python): `key = terminal("sops --decrypt secrets/cf_api_key.txt.sops", workdir=HOME)["output"].strip()`.
+2. **Query the CF API** with `x-api-key` header:
+   - `GET /v1/mods/search?gameId=432&slug=<slug>` → `modId`
+   - `GET /v1/mods/{modId}/files?gameVersion=1.21.1&modLoaderType=6` → file list (loader 6 = NeoForge)
+   - `GET /v1/mods/{modId}/files/{fileId}/download-url` → `{"data": "<direct CDN url>"}`. ⚠️ The `/download` endpoint 404s — use `download-url`, then download the CDN URL directly.
+3. Save the jar to `data/mods/<fileName>.jar`.
+4. **Re-decrypt secrets** (`cf_api_key.txt` + `mc.env`) before `docker compose restart <svc>` — the volume-mounted key file is cleaned up after deploy, so a restart needs it present again (see the restart pitfall above).
+5. Restart and verify: `docker logs` shows `Found mod file "<jar>"`, then `Done (...)!`.
+
+The added jar loads on restart; itzg's modpack sync does NOT remove extra jars unless
+`REMOVE_OLD_MODS` / `CF_FORCE_SYNCHRONIZE` is set.
 
 ### Multiple Servers (Two-Container Pattern)
 
@@ -1674,7 +1702,14 @@ dockge:
 - `templates/migrate-secrets.py` — migration helper for moving secrets between formats
 - `references/crafty-controller.md` — Crafty Controller setup, migration from itzg, API notes, pitfalls
 - `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
-- `references/minecraft-atm10-sky.md` — working ATM10 To The Sky deploy config with resource reqs, startup times, verification commands
+- `references/minecraft-add-individual-mods.md` — adding specific mods to an AUTO_CURSEFORGE server (CF API workflow, `/download-url` vs `/download`, re-decrypt before restart)
+- `references/minecraft-itzg-add-mods.md` — add a single extra mod to a running itzg AUTO_CURSEFORGE server (CF API download flow, NeoForge modLoaderType=6, version matching)
+- `references/minecraft-curseforge-add-mod.md` — add individual CurseForge mods to a running AUTO_CURSEFORGE server via the CF API (slug→id, `modLoaderType` table, `/download-url` endpoint, extra-jar-survives-restart)
+- `references/minecraft-add-mods.md` — adding individual extra mods to a running AUTO_CURSEFORGE server (CF/Modrinth API download, version matching, restart re-decrypt dance, `.curseforge-manifest.json` format)
+- `references/minecraft-add-mods.md` — adding individual extra mods to an AUTO_CURSEFORGE server via CurseForge/Modrinth API (download-url endpoint, modLoaderType enum, restart+verify)
+- `references/minecraft-atm10-sky.md` — working ATM10 deploy config (server migrated to ATM10 Aeronautics, service `minecraft-atm10aero`, `CF_SLUG=all-the-mods-10-aeronautics`, 2026-09-06)
+- `references/minecraft-modpack-swap.md` — swapping one CurseForge modpack for another (procedure + pitfalls; orphaned-container removal, stray cf_api_key.txt dir, root-owned parent dir)
+- `references/minecraft-atm10-sky.md` — working ATM10 deploy config (historical — server is now ATM10 Aeronautics, slug `all-the-mods-10-aeronautics`)
 - `references/minecraft-plugins.md` — switching to Paper/Purpur for plugins, plugin repos, version checking
 - `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)
 - `references/tailscale-reachability.md` — what's reachable via Tailscale IP + port vs what needs Caddy, and how to check with `ss -tlnp`

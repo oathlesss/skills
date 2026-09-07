@@ -13,7 +13,16 @@ description: Build, configure, and verify OBS browser-source stream overlays (HT
 ## The project
 - Local: `/home/ruben/stream-overlay`
 - Repo: `git.oathless.dev/oathless/stream-overlay` (private; remote name `forgejo` — see `go-vue-fullstack` skill).
-- OBS runs on **Windows** (files copied to `C:/Users/ruben/Documents/stream-overlay/`). Edit on the Linux homelab, commit + push, user pulls/copies.
+- OBS runs on **Windows** (files copied to `C:/Users/ruben/Documents/stream-overlay/`). Edit on the Linux homelab, commit + push, user pulls/copies. **Remind Ruben to copy ALL files** (every `.html` + `config.js` + `style.css` + `script.js`), not just the entry HTML.
+- Handle **@Oathless** (Minecraft account is "0athless" with a zero). Streams **Minecraft + Smite 2**. Default accent amber-gold `#ffb800`; purple `#7c3aed` is the Smite "god" alternative.
+
+## OBS browser-source wiring (exact steps)
+1. Sources → **+** → **Browser** → name it "Overlay" (or one source per scene).
+2. Tick **Local file**, browse to the scene's `.html`.
+3. Size **3840×2160** (4K native; OBS downscales cleanly to 1080p).
+4. Place the source **above** game capture so transparent regions show gameplay.
+5. Tick **"Control audio via OBS"** on the source or the alert chime never reaches the stream mixer.
+6. Per-scene game label: append `?game=Smite%202` to a `file://` URL (URL mode only) — in Local File mode edit `config.js` instead.
 
 ## Architecture (single source, per-scene files)
 - `config.js` — ALL user settings (accent, game, cam, handle, show flags, socials). This is what Ruben edits.
@@ -28,9 +37,11 @@ OBS Local File points at a filesystem path, NOT a URL — `?accent=...` never re
 - URL params still work as OVERRIDES if the user unchecks "Local File" and uses a `file://` URL with `?accent=` etc.
 
 ## Design rules (Ruben's preferences)
+- **Compact widgets.** Nothing should take over the screen — small pills / thin bars, edge/corner placement (Ruben: "I don't want them to take up the entire screen").
+- **Keep clean variants via a toggle, never by overwriting.** When he asks for an effect *and* "keep a copy without it", implement it as a config flag (e.g. `decor: false` = clean) so both look modes live in one file — don't fork or delete the clean version. Git history preserves old clean commits too.
 - 4K native (3840×2160); OBS scales down to 1080p output cleanly.
 - Webcam frame OFF by default, toggleable (`cam: true` in config / `?cam=1`). Ruben has no cam yet.
-- Every widget toggleable via `config.js` `show: { nowPlaying, latestFollower, chat, goal, socials }`. Feature toggles too: `mythical`, `cam`, `goal`, `sound`.
+- Every widget toggleable via `config.js` `show: { nowPlaying, latestFollower, chat, goal, socials }`. Feature toggles too: `decor`, `cam`, `goal`, `sound`.
 - **Socials MUST show handle text + icon, not logos alone** — a bare Twitch logo tells a viewer nothing. Ruben called this out directly ("why even have the social logos there").
 - Minimal/decorative-lean: Ruben questions the value of anything non-functional ("why even have them there").
 - **Avoid the "template" look** — this is what makes him say "this feels off": system fonts (Segoe UI/Inter), dead-center symmetric layouts, and the accent color scattered everywhere all read as cheap. Use a real display font (Cinzel / Montserrat / Bebas Neue), ONE strong focal point, and restraint with the accent color.
@@ -38,11 +49,18 @@ OBS Local File points at a filesystem path, NOT a URL — `?accent=...` never re
 - **Stop tweaking when a design "feels off" after one round.** Offer 2–4 genuinely distinct directions (different font + layout + palette) rendered side-by-side and let him pick — do not keep guessing with incremental tweaks.
 
 ## More pitfalls
+- **Use `textContent` (NEVER `innerHTML`) for chat/alert user text** — chat is untrusted input (XSS). The built-in IRC chat and postMessage alerts must write user-supplied strings via `textContent`.
 - **Alert sound needs "Control audio via OBS"** ticked on the browser source, or the chime never reaches the stream mixer.
 - **Anchor tags render with a default blue underline** in OBS — always `text-decoration: none` on `.social` / link styling.
 - **Custom fonts must be self-hosted for offline OBS** — embed the `.woff2` as a base64 data URI in `@font-face` (`src: url("data:font/woff2;base64,…")`), which also sidesteps `file://` font-loading quirks. Google Fonts `@import`/`<link>` works for agent-browser previews but breaks without internet.
 - **Google Fonts `css2` returns multiple unicode-range subsets** (`/* latin */`, `/* latin-ext */`, …). `curl … | grep … | head -1` grabs the FIRST block = `latin-ext`, which has NO basic ASCII glyphs → text silently falls back to the system font. Always take the `/* latin */` block (larger file, `U+0000-00FF` range).
 - **`document.fonts.check()` gives false confidence** — it returns true even when glyphs silently fall back. Verify a font actually rendered by measuring the element: a condensed font renders a far narrower `getBoundingClientRect().width` at the same `font-size` (ratio ~5 vs ~8.5 for a fallback sans). Measure via `agent-browser eval` and compare.
+
+## Alert sound (Web Audio)
+- Default: synthesized **C–E–G chime** via the Web Audio API — no audio file to manage.
+- Reuse a single `AudioContext` (create lazily, `ctx.resume()` if suspended) rather than newing one per alert.
+- Custom: `sound: "alert.mp3"` plays a local file; `sound: false` silences.
+- **"Control audio via OBS" must be ticked** on the browser source or the chime never reaches the stream (Ruben's source had it unchecked — flag it).
 
 ## config.js shape
 ```js
@@ -65,13 +83,21 @@ window.OVERLAY_CONFIG = {
 - Full-screen scenes get optional broadcast decorations (bolt mark + `LIVE` + wordmark + floating particles) injected by JS when `decor` is true — toggle off for the clean look.
 
 ## Data wiring (follower / sub / chat)
-Full IRC protocol + EventSub + StreamElements + YouTube specifics: `references/twitch-wiring.md`.
+Protocol overview + EventSub + StreamElements + YouTube specifics: `references/twitch-wiring.md`.
+Working IRC client + postMessage snippets (verified in session): `references/twitch-irc-and-alerts.md`.
 - Overlay exposes a `postMessage` API: `{type:"follower",name}`, `{type:"sub",name,tier}`, `{type:"chat",user,message,color}`, `{type:"latest",name}`, or generic `{title,message}`.
-- Followers/subs → StreamElements/Streamlabs "Custom Widget" forwarding into `postMessage`.
+- Followers/subs → StreamElements/Streamlabs "Custom Widget" forwarding into `postMessage`. Caveat: OBS browser sources are separate CEF instances and can't `postMessage` each other directly — for StreamElements/Streamlabs the overlay itself becomes the "custom widget" and listens to their SDK.
 - Chat → built-in Twitch IRC client (`wss://irc-ws.chat.twitch.tv:443`), gated by `channel`/`nick`/`chat_token` in config. `chat_token` is a SECRET — keep it out of public git.
-- `?demo=1` simulates chat + follower + sub for verification.
+- `showAlert()` removes+re-adds the `.show` class and forces a reflow (`void el.offsetWidth`) to restart the CSS animation for rapid events.
+- `?demo=1` simulates chat + follower + sub; `?test=1` fires a demo alert after ~800ms.
 
 ## Verification workflow (headless)
 - Render each HTML with agent-browser → `set viewport 3840 2160` → `screenshot` → `vision_analyze` (see `browser-automation` skill for the `--no-sandbox` + viewport setup).
 - Runtime checks: `agent-browser eval "JSON.stringify({...})"` to confirm config loaded / a hide flag took effect (`getComputedStyle(el).display === "none"`).
 - "Show me variants" (accent colors etc.): loop render + screenshot, then build a labeled contact sheet with Pillow via `uv run --with pillow python3` (ImageMagick not installed). See `browser-automation` `references/visual-verification.md`.
+
+## Quick-start templates (generic starter overlay)
+For a fresh overlay not tied to Ruben's project, copy the three starter files in `templates/` into a new dir and edit `--accent`, the `@Oathless` handle, and the social `href`s:
+- `templates/index.html` — layout (now-playing pill, webcam frame, social bar, alert box)
+- `templates/style.css` — theme, `--accent` variable drives everything
+- `templates/script.js` — `?game=` override + `showAlert`/postMessage alert system (see above)
