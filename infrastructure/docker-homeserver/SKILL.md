@@ -1440,6 +1440,16 @@ docker exec minecraft-modded rcon-cli "debug stop"
 
 **⚠️ PITFALL: Mod TPS commands may be chat-only via RCON.** `/spark tps` and `/spark health` return empty responses via RCON — their output goes to chat, not the console stream. Use `/debug start/stop` for RCON-based TPS or interact via the chat in-game.
 
+### Performance Feasibility: "Can this server handle this modpack?"
+
+Before answering whether the OptiPlex can run a given modpack, gather evidence — don't guess from the pack's reputation alone. Full diagnostic sequence + interpretation + remediation in `references/minecraft-server-performance.md`. The headline facts:
+
+- **Single-thread CPU is the bottleneck, not RAM.** The i5-9500T (6c/6t, 35W "T" chip, 3.7GHz boost) is fine on RAM (30GB total) but weak on sustained single-core speed — exactly what Minecraft's tick loop needs. Judge a pack by chunk-gen load, not mod count alone.
+- **Skyblock packs are light; full-worldgen packs are heavy.** ATM10 To The Sky (void world) ≈ trivial chunk-gen. ATM10 Aeronautics (full worldgen + Twilight Forest + Aether + Undergarden + Deeper Darker + Ice & Fire Dreadlands + Allthemodium Beyond) ≈ near the ceiling for this box.
+- **The world-folder-size tell.** A fresh world (5.8MB) means nobody has explored yet, so the pack's true cost hasn't manifested. Idle CPU% on an empty world is NOT a proof it'll hold up under 2–3 players flying/exploring.
+- **Remediation levers (biggest wins first):** cut `view-distance` + `simulation-distance` 10→6, pre-generate chunks (chunky), switch CPU governor `powersave`→`performance`.
+- **`spark tps`/`spark health` return empty via RCON** (chat-only output) — use `/debug start` + `/debug stop` for RCON TPS, or ask in-game.
+
 ### Whitelist Management
 
 Whitelist management has two layers: **live** (RCON, instant, no restart) and **persistent** (docker-compose env vars, survives container recreation).
@@ -1709,6 +1719,7 @@ dockge:
 - `references/minecraft-add-mods.md` — adding individual extra mods to an AUTO_CURSEFORGE server via CurseForge/Modrinth API (download-url endpoint, modLoaderType enum, restart+verify)
 - `references/minecraft-atm10-sky.md` — working ATM10 deploy config (server migrated to ATM10 Aeronautics, service `minecraft-atm10aero`, `CF_SLUG=all-the-mods-10-aeronautics`, 2026-09-06)
 - `references/minecraft-modpack-swap.md` — swapping one CurseForge modpack for another (procedure + pitfalls; orphaned-container removal, stray cf_api_key.txt dir, root-owned parent dir)
+- `references/minecraft-server-performance.md` — "can this box keep up with this modpack?" diagnostic sequence, signal interpretation, OptiPlex 3070 Micro hardware ceiling, and remediation levers
 - `references/minecraft-atm10-sky.md` — working ATM10 deploy config (historical — server is now ATM10 Aeronautics, slug `all-the-mods-10-aeronautics`)
 - `references/minecraft-plugins.md` — switching to Paper/Purpur for plugins, plugin repos, version checking
 - `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)

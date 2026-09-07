@@ -26,6 +26,7 @@ Faithful-style texturing is a **systematic transform** (16x → 32x, same layout
    .venv/bin/python build_pack.py --mods-dir /path/to/mods
    ```
 3. Verify (see below), then install: drop the zip in `resourcepacks/`, load it **above** a base 32x pack (e.g. Classic Faithful 32x) so vanilla keeps the hand-painted base and this pack only fills mod gaps.
+4. Obtain the base Faithful 32x pack from Modrinth if you don't already have it — see `references/fetch-faithful-base.md` for the API recipe and quirks.
 
 ## Key implementation details
 
@@ -51,3 +52,4 @@ Faithful-style texturing is a **systematic transform** (16x → 32x, same layout
 ## Files
 
 - `scripts/build_pack.py` — full working pipeline (extract + Scale2x 2x + package to zip).
+- `references/fetch-faithful-base.md` — Modrinth API recipe for downloading the official Faithful 32x base pack.
