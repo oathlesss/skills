@@ -1,9 +1,10 @@
 ---
 name: minecraft-resource-pack
-description: Build auto-upscaled (Faithful-style) resource packs for modded Minecraft by extracting and 2x-scaling every texture from a modpack's jars.
+description: Build auto-upscaled (Faithful-style) resource packs for modded Minecraft — either by 2x-scaling every texture from a modpack's jars, or by upscaling an existing 16x retexture pack into a 32x "Faithful variant".
 triggers:
   - "make a resource pack like Faithful but for the mods in [pack]"
   - "upscale / 2x / 32x the textures in this modpack"
+  - "make a Faithful variant of [retexture/resource pack]"
   - Any request to auto-generate texture coverage for a modded Minecraft instance
 ---
 
@@ -32,15 +33,26 @@ Faithful-style texturing is a **systematic transform** (16x → 32x, same layout
 
 - Extract `assets/<ns>/textures/**/*.png` from every jar; write to the **same relative path** (that *is* the resource-pack layout).
 - **Skip the `minecraft:` namespace** — the base Faithful pack covers vanilla better than an auto-upscale would.
-- Only upscale textures with `max(w,h) <= 32`; leave larger (atlases, GUIs, already-high-res) untouched.
+- Only upscale **16-wide** textures (`width == 16`) — this includes tall animated strips (`16x80`, `16x352` → `32x160`, `32x704`) that the naive `max(w,h) <= 32` test would wrongly skip and leave misaligned against the upscaled block faces. Leave everything else untouched (GUIs, atlases, already-32+).
+- **Two input modes:** (a) extract from mod jars (default); (b) upscale an *existing* resource pack — e.g. a 16x dark-mode retexture like AE2 Blackout. In mode (b) preserve `.png.mcmeta` AND non-texture files (block/item model JSONs, `pack.png`) verbatim, and rewrite only `pack.mcmeta`.
 - Copy `*.png.mcmeta` verbatim to preserve animated-texture metadata.
 - `pack.mcmeta` `pack_format`: 34 = 1.21.1 (32 = 1.20.5/6, 42 = 1.21.2/3, 46 = 1.21.4).
 - Convert to RGBA and run the scaler on all 4 channels with color equality so alpha edges stay aligned.
 
+## Variant: upscale an existing retexture pack (a "Faithful variant")
+
+When the user wants a 32x "Faithful variant" of an existing 16x *retexture* pack (e.g. AE2 Blackout / AE2 Dark Mode dark-mode themes), the source is a single resource-pack zip, NOT mod jars:
+
+- **Upscale rule differs:** use `width == 16` (not `max(w,h) <= 32`) so you also catch tall animated strips — `16x80 → 32x160`, `16x32 → 32x64`. The `max(w,h) <= 32` rule would wrongly leave `16x80` untouched because 80 > 32.
+- **Leave GUIs/atlases untouched:** 256x256, 512x512, 128x128, 64x64, and odd-sized GUI sprites (7x15/12x15 scrollers, 200x20 buttons) are already high-res — upscaling them is wrong and bloats the pack.
+- **Copy `*.png.mcmeta` AND `models/**/*.json` verbatim** (retexture packs often ship block/item model overrides).
+- Rewrite `pack.mcmeta` (keep `pack_format`; new description), keep `pack.png`.
+- Full recipe + CurseForge fetch: `references/retexture-pack-variant.md`.
+
 ## Pitfalls
 
 - **NumPy broadcasting bug (vectorized pixel-art scalers):** a boolean condition of shape `(H,W)` will NOT broadcast against pixel data of shape `(H,W,4)` — NumPy aligns shapes from the right, so the last axis (16 vs 4) fails with "operands could not be broadcast together with shapes (16,16) (16,16,4) (16,16,4)". Fix: add a trailing axis to the condition — `np.all(a == b, axis=-1)[..., None]` → `(H,W,1)`.
-- **Scaler quality tiers:** Scale2x (baseline: correct, ~20 lines, smooths diagonals) < xBR/hq2x (crisper, closer to Faithful). Ship Scale2x first, offer xBR as a one-function swap + re-run upgrade.
+- **Scaler quality tiers:** Scale2x (baseline: correct, ~20 lines, smooths diagonals) < xBR/hq2x (crisper, closer to Faithful). **Pick by texture style, not uniformly:** for fine technical geometry (circuit traces, thin grid lines, thin borders — AE2, Mekanism, Create) Scale2x leaves staircase jaggies; Super-xBR (numba-jitted, `superxbr_numba.py`) comes out clearly cleaner and closer to hand-painted Faithful. For a single-namespace override pack (e.g. AE2 Blackout layered over the main pack) it's fine to use xBR even when the main pack shipped Scale2x — the override wins the namespace anyway. Ship Scale2x as the default, offer xBR as a one-function swap + re-run when the pack is geometry-heavy. **Concrete finding:** for technical/geometric pixel art — AE2 circuitry, thin 1px lines, grid-based machines — Super-xBR is clearly better (Scale2x leaves staircase jaggies on 1px lines); for organic shapes Scale2x is fine. Before shipping, verify with a 3-way contact sheet (orig nearest-neighbour / Scale2x / xBR) inspected via vision_analyze.
 - Don't upscale already-large textures — 32x→64x or 64x→128x is wrong and bloats the pack.
 - A modpack's jar list includes library/API mods with no textures; "fewer mods with textures than jars" is expected, not a bug.
 
@@ -52,4 +64,7 @@ Faithful-style texturing is a **systematic transform** (16x → 32x, same layout
 ## Files
 
 - `scripts/build_pack.py` — full working pipeline (extract + Scale2x 2x + package to zip).
+- `superxbr_numba.py` (in working dir, not skill-bundled) — numba-jitted Super-xBR 2x scaler (use for technical/circuitry textures).
+- `references/upscaling-existing-resource-pack.md` — mode B: Faithful-variant of a published pack (AE2 Blackout example), plus Modrinth/CurseForge download patterns.
 - `references/fetch-faithful-base.md` — Modrinth API recipe for downloading the official Faithful 32x base pack.
+- `references/retexture-pack-variant.md` — upscaling an existing 16x retexture pack (AE2 Blackout case) + CurseForge API fetch recipe.

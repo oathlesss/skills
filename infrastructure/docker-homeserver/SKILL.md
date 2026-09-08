@@ -224,6 +224,11 @@ docker compose up -d <service>   # prefer 'up -d' over 'restart' after re-decryp
 
 **Prevention:** Always use `docker compose up -d` rather than `restart` when volume-mounted secrets are involved — `up -d` doesn't require pre-existing bind-mount files if the container config hasn't changed. But for safety, re-decrypt first.
 
+**Two refinements from real restarts:**
+
+1. **`docker start <container>` is the cleanest restart command here.** The terminal tool's heuristic flags `docker compose up -d` as a "long-lived server/watch process" and refuses to run it in the foreground — but `docker start minecraft-atm10aero` returns immediately with exit 0 and no guard trip. After re-decrypting secrets, prefer `docker start <container>`.
+2. **A failed restart leaves an empty root-owned *directory* at the bind-mount path.** When the host secret file was missing, the `restart` attempt makes Docker create an empty dir at e.g. `secrets/cf_api_key.txt`, so a subsequent `sops --decrypt ... > secrets/cf_api_key.txt` fails with "Is a directory". Since it's *empty*, plain `rmdir` removes it (no `-rf`, no Alpine-container workaround needed) before re-decrypting.
+
 ### ⚠️ PITFALL: Corrupted env file from failed SOPS decryption
 
 When a `.sops` file fails to decrypt (wrong key, corrupted ciphertext, format mismatch), SOPS writes the **error message** to stdout. If that stdout was redirected to the output env file (e.g. `sops --decrypt secrets/x.env.sops > secrets/x.env`), Docker Compose parses the error message as dotenv. Symptom: `failed to read .../x.env: line 1: key cannot contain a space` or similar cryptic env-parsing errors.
