@@ -37,6 +37,34 @@ chmod +x ~/.local/bin/godot
 
 Verify: `~/.local/bin/godot --version`
 
+## Godot MCP (AI assistant integration)
+
+MCP lets an AI assistant (Hermes, Claude Code, Cursor) drive the Godot editor — and for in-editor plugins, the *running game*. Two architectures:
+
+1. **External CLI MCP** — a Node/Python server that shells out to the Godot binary. The canonical one is `Coding-Solo/godot-mcp` (`npx @coding-solo/godot-mcp`): launch editor, run project, capture debug output, create scenes/nodes. Mostly duplicates what `godot --headless` + direct `.gd`/`.tscn` editing already do.
+2. **In-editor plugin MCP** — a Godot addon that bridges the *live editor* to an MCP server over WebSocket. Adds capability headless CLI can't: deterministic playtesting, input injection, live runtime state as JSON, and running GDScript inside the game.
+
+**Recommendation: `satelliteoflove/godot-mcp`** (MIT, actively maintained). Requires Godot 4.5+ and Node 20+. 21 tools / 86 actions.
+
+Install into a project:
+
+```bash
+npx -y @satelliteoflove/godot-mcp --install-addon /path/to/project
+```
+
+Then enable it in `project.godot`:
+
+```ini
+[editor_plugins]
+enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg")
+```
+
+**⚠️ PITFALL: the editor must be OPEN (not headless).** The MCP server talks to the addon over WebSocket `127.0.0.1:6550`, and the addon reaches the running game over Godot's debugger protocol. No editor running = all tools error out. This *complements* — does not replace — headless CLI work (`godot --headless --quit`, `-s tests/...`).
+
+Notable tools: `godot_game_time` (freeze/step/step-until the game clock), `godot_runtime_state` (positions/velocities/anim state as JSON), `godot_input` (inject named actions/joypad/mouse), `godot_exec` (run GDScript inside the running game), `godot_node_read`/`godot_node_edit`, `godot_scene`, `godot_profiler`.
+
+Telemetry: usage logging to `~/.godot-mcp/usage.log` is ON by default (local-only). Disable with env `GODOT_MCP_USAGE_LOG=0`.
+
 ## Project structure conventions
 
 ```
@@ -206,6 +234,16 @@ func _make_player() -> Node:
 
 5. **Run command**: `cd /path/to/project && ~/.local/bin/godot --headless -s tests/test_player.gd`
 
+### Headless mode cannot render (screenshots)
+
+`--headless` uses a dummy rendering server, so `get_viewport().get_texture().get_image()` returns `null` and you cannot capture screenshots or render frames headlessly. To screenshot a running game, use a virtual display:
+
+```bash
+xvfb-run -a godot --path <project> --rendering-method gl_compatibility -s capture.gd
+```
+
+`capture.gd` extends SceneTree, instantiates `res://scenes/main.tscn`, awaits ~90 frames, then `get_root().get_texture().get_image().save_png(out)` and `quit(0)`. Requires `xvfb` (`sudo apt install -y xvfb`). A ready-made version lives in the `game-gen-pipeline` skill's `scripts/`.
+
 ## Physics tuning
 
 For physics-heavy games (grappling, PinJoint2D, momentum):
@@ -247,6 +285,24 @@ When `up_direction` can change (wall/ceiling walking), ALL physics must be relat
 1. **Tangent rotation**: `up_direction.rotated(PI/2)` not `-PI/2`. With `up=(0,-1)`: `PI/2` → `(1,0)` = RIGHT ✓. `-PI/2` → `(-1,0)` = LEFT ✗ (inverts A/D).
 2. **Jump direction**: `velocity += up_direction * impulse` not `-=`. `+= (-600)` → goes UP ✓. `-= (-600)` = `+= (0,600)` → goes DOWN ✗.
 3. **Jump cut condition**: `velocity.dot(up_direction) > 0` not `< 0`. During ascent: dot=500>0 ✓. `< 0` only fires during fall ✗.
+
+## Sign-proof surface movement (prefer over tangent math)
+
+For wall/ceiling walking, instead of hand-computing the surface tangent
+(`Vector2(-normal.y, normal.x)`) — a frequent source of sign errors, and it fails
+to climb vertical walls when fed only horizontal input — project the raw input onto
+the tangent plane:
+
+```gdscript
+var move := Vector2(h, v).normalized()
+move -= normal * move.dot(normal)   # remove the into-surface component
+if move.length() > 0.1:
+    velocity = move.normalized() * CLIMB_SPEED
+```
+
+This handles left wall, right wall, and ceiling uniformly with zero sign logic, and
+accepts both horizontal and vertical input so the player can climb vertical
+surfaces. Use this for RigidBody2D cling-movement instead of the tangent formula.
 
 ## Surface-Walking Advanced Patterns
 
@@ -331,7 +387,21 @@ After any physics change, test these scenarios:
 - `templates/headless_test_runner.gd` — alternative headless test runner
 
 For gameplay prototyping before the art pipeline:
-- Use `ColorRect` nodes in Godot (no external sprite files needed)
-- Character: distinct colored rects for body, core, sensor/eye
+- Use `Polygon2D` nodes for world-space visuals (no external sprite files needed).
+  ⚠️ NOT `ColorRect` — it's a Control node that renders in screen/UI space, not the
+  Camera2D world. A game whose visuals are all ColorRects under physics bodies runs
+  fine (physics works headless) but renders as a blank gray screen. Put `Label`s
+  under a `CanvasLayer` for UI text. Known-good rect helper:
+      func _rect_poly(col: Color, size: Vector2, centered: bool = false) -> Polygon2D:
+          var p := Polygon2D.new()
+          p.color = col
+          if centered:
+              var hw := size.x * 0.5
+              var hh := size.y * 0.5
+              p.polygon = PackedVector2Array([Vector2(-hw, -hh), Vector2(hw, -hh), Vector2(hw, hh), Vector2(-hw, hh)])
+          else:
+              p.polygon = PackedVector2Array([Vector2.ZERO, Vector2(size.x, 0), size, Vector2(0, size.y)])
+          return p
+- Character: distinct colored polygons for body, core, sensor/eye
 - Arena: dark background (#111118), muted blue-grey platforms (#2a2a40 range)
 - Debug overlay: velocity (red), surface normal (green), gravity (blue)

@@ -175,6 +175,8 @@ hermes config set model.default deepseek-chat
 hermes chat --provider openrouter --model deepseek/deepseek-v4-pro
 ```
 
+**⚠️ PITFALL: don't switch the default model on expressed interest.** Changing `model.default`/`model.provider`/`model.base_url` affects every future session. Confirm before doing it. This user keeps `deepseek-v4-pro` as the default and uses stronger models (e.g. GLM 5.3) only for specific tasks (game dev) or explicit requests. `hermes chat --provider X --model Y` is the non-destructive way to try a model for one session.
+
 ### Fallback Chain
 
 Fallback providers kick in automatically when the primary fails (rate limits, timeouts, connection errors). Not for on-demand model switching — for error recovery only.
@@ -222,6 +224,38 @@ hermes config set <key> <value> # set any key
 ```
 
 **⚠️ PITFALL: `hermes config get` returns exit code 2 for unset keys.** Don't interpret exit code 2 as "command failed" — it means the key has no configured value (i.e., using defaults). Use `hermes config show | grep` to see what's actually set vs. defaulted.
+
+## MCP Servers
+
+Hermes can act as an MCP client — connect to external tool servers (stdio or HTTP) so their tools register alongside native tools. Config lives under `mcp_servers:` in `~/.hermes/config.yaml`.
+
+### Adding a server (use the CLI, not file editing)
+
+```bash
+hermes mcp add <name> --command npx --args <pkg> [--env KEY=VALUE]
+hermes mcp list          # list configured servers
+hermes mcp test <name>   # test connection
+```
+
+`hermes mcp add` is discovery-first: it launches the server, probes its tool list, and prompts "Enable all N tools? [Y/n/select]". Pipe `y` to script it non-interactively.
+
+**⚠️ PITFALL: `config.yaml` is security-guarded.** Both `patch` and `write_file` refuse to write `~/.hermes/config.yaml` (and `~/.hermes/.env`). Configure via `hermes mcp add` / `hermes config set` — never via file tools or direct shell edit.
+
+**⚠️ PITFALL: dash-prefixed args break `--args`.** `hermes mcp add x --args -y pkg` fails with "unrecognized arguments" — argparse stops consuming `[ARGS ...]` at the `-y`. Workaround: omit the flag (npx resolves from cache after first run), or use `--args=-y pkg`. For npm auto-confirm instead of `-y`, set env `npm_config_yes=true`.
+
+**⚠️ PITFALL: the MCP SDK is an extra — install with `[all]`, not `[mcp]` alone.** MCP support needs the `mcp` Python package. If missing, `hermes mcp add` errors "requires the 'mcp' Python SDK". Fix:
+
+```bash
+uv tool install 'hermes-agent[all]==<version>' --reinstall
+```
+
+Do **not** use `[mcp]` alone — `uv tool install --reinstall` replaces the whole tool environment, so `hermes-agent[mcp]` silently drops every other extra (e.g. `yt-dlp`, `s3transfer`, `tabulate`) that a prior `[all]` install had. If the original env had packages beyond `[all]`'s pins, re-add them with `--with`:
+
+```bash
+uv tool install 'hermes-agent[all]==<version>' --reinstall --with yt-dlp --with s3transfer --with tabulate
+```
+
+Inspect available extras and their deps via the installed package metadata (`Provides-Extra` / `Requires-Dist`). Verify after install by importing the dropped modules in the tool's Python: `~/.local/share/uv/tools/hermes-agent/bin/python -c "import yt_dlp, mcp"`.
 
 ## Secrets & Credential Handling
 
