@@ -50,6 +50,15 @@ chunks instead of re-worldgenning). Exact version numbers and the full command
 sequence live in `references/pregen-and-distant-horizons.md` — read it before running
 anything; version IDs drift across MC versions and must be verified against the CF API.
 
+## Finding the exact MC + NeoForge version
+
+Never guess the version when adding mods. Read it from the server's own state:
+
+```bash
+cat /home/ruben/homeserver/minecraft-atm10aero/data/version.json   # itzg ForgeManifest: minecraftVersion + forgeVersion
+# or: docker exec minecraft-atm10aero cat /data/version.json
+```
+
 ## Mod management on itzg AUTO_CURSEFORGE
 
 The container re-syncs the modpack from CurseForge on start, but **manual jar drops into
