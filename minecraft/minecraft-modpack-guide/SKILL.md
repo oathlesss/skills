@@ -26,6 +26,7 @@ Run parallel research via delegate_task across these source types:
 2. **Reddit** — Search r/feedthebeast, r/allthemods, r/ModdedMinecraft. Extract community consensus, bug workarounds, underrated mods, TPS optimization tips.
 3. **Written guides/wikis** — Search official pack wikis (GPORTAL, allthemods.com, alltheguides), SiriusMC, Minecraft-Guides wiki.
 4. **Discord** — Check if the pack has an official Discord (e.g., discord.gg/allthemods) and note it as a source. Community Discord often has pinned tips not found elsewhere.
+5. **Official GitHub issue tracker** — most ATM packs have a `Mod Suggestions List` issue (e.g. AllTheMods/ATM-10-a #1) where the community + maintainers discuss mods to add/remove. This is the authoritative source for "which mods are worth adding to this pack" and "what's already in it", and the maintainers' own comments signal their stance (e.g. CC:Tweaked declined, focus on optimization/performance). Fetch it via the GitHub API (no key needed for public repos): `api.github.com/repos/<org>/<repo>/issues/1` + `/comments`.
 
 ### Phase 2: Synthesis into Mega-Guide
 

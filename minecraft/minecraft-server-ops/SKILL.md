@@ -50,14 +50,47 @@ chunks instead of re-worldgenning). Exact version numbers and the full command
 sequence live in `references/pregen-and-distant-horizons.md` — read it before running
 anything; version IDs drift across MC versions and must be verified against the CF API.
 
-## Finding the exact MC + NeoForge version
+## Finding the exact MC + NeoForge version + pack identity
 
-Never guess the version when adding mods. Read it from the server's own state:
+Never guess the version when adding mods or matching a client to the server. Read it from the
+server's own state. **`version.json` does NOT exist on AUTO_CURSEFORGE containers** — the itzg
+helpers write dotfile manifests instead (confirmed on `minecraft-atm10aero`):
 
 ```bash
-cat /home/ruben/homeserver/minecraft-atm10aero/data/version.json   # itzg ForgeManifest: minecraftVersion + forgeVersion
-# or: docker exec minecraft-atm10aero cat /data/version.json
+cd /home/ruben/homeserver/minecraft-atm10aero/data
+cat .neoforge-manifest.json      # {minecraftVersion, forgeVersion} e.g. 1.21.1 / 21.1.248
+cat .install-curseforge.env      # MODPACK_NAME, MODPACK_VERSION (e.g. 0.5.1), TYPE=NEOFORGE
 ```
+
+`.curseforge-manifest.json` is the valuable one — it holds the **exact pack identity** plus the
+full installed file list:
+
+- `slug`, `modpackName`, `modpackVersion`, `modId` (CF project id), `fileId` (CF file id),
+  `minecraftVersion`, `modLoaderId` (e.g. `neoforge-21.1.248`), `levelName`
+- `files`: a flat list of **file paths** (e.g. `mods/foo-1.21.1.jar`, `config/…`, `kubejs/…`)
+  — NOT `{projectID,fileID}` objects. Use it to diff against the actual mods dir (below).
+
+```bash
+python3 -c "import json; d=json.load(open('.curseforge-manifest.json')); print(d['modpackVersion'], d['modId'], d['fileId'], d['modLoaderId'], len(d['files']))"
+```
+
+### Which mods did I add manually vs the official pack?
+
+Diff the real jars against the manifest's `files` paths:
+
+```bash
+python3 -c "
+import json, os
+d=json.load(open('/home/ruben/homeserver/minecraft-atm10aero/data/.curseforge-manifest.json'))
+m=set(f.split('/',1)[1] for f in d['files'] if f.startswith('mods/') and f.endswith('.jar'))
+a=set(f for f in os.listdir('/home/ruben/homeserver/minecraft-atm10aero/data/mods') if f.endswith('.jar'))
+print('MANUAL ADDS (in dir, not in manifest):', sorted(a-m))
+print('MISSING (in manifest, not in dir):', sorted(m-a))
+"
+```
+The `a - m` set is your manual additions (AppliedFlux, Chunky, C2ME, DistantHorizons, etc.).
+The **client-required** subset of those (content mods that add blocks/items) is what you must
+ship to players; server-side perf/pregen mods (Chunky, C2ME, DH server jar) don't gate joining.
 
 ## Mod management on itzg AUTO_CURSEFORGE
 
@@ -71,14 +104,44 @@ C2ME shows harmless `@Mixin target ... not found` WARNs for client-side classes 
 has no client) — expected, not a bug. Detect boot-complete via RCON `list` responding,
 not via log grep.
 
+## Exporting a shareable PrismLauncher/CurseForge modpack
+
+To hand friends an importable modpack matching the server, don't rebuild from scratch:
+the official pack is already on CurseForge, so the pack = pinned version + the few
+manually-added mods. Full workflow (read itzg metadata files, fetch the official zip via
+the CF API, extract manifest.json + modlist.html + overrides/, bundle extra mods into
+`overrides/mods/`, re-zip) lives in `references/shareable-modpack-export.md`. Key gotchas:
+friends MUST install the server's exact CF version (CF shows a newer "latest" → mod
+mismatch), content-mod extras need a client match while Chunky/C2ME/DH-server are
+server-side-only, and the ~100MB pack zip exceeds Discord's 25MB limit (distribute via
+Forgejo release / Caddy, or just send the tiny client-required jars).
+
+## Building a shareable PrismLauncher modpack for players
+
+To hand friends a one-import file with the server's exact mod set, see
+`references/shareable-modpack.md`. Key facts: the pack is already public on CurseForge, so
+"our own" pack = pinned official version + client-required manual jars bundled in
+`overrides/mods/`; always pin the EXACT server version (CF "latest" drifts — server 0.5.1 vs CF
+0.6.1 caused the mismatch risk). Full build recipe + the ~100 MB distribution problem + the
+docker-exec CF API quoting pitfall are in the reference.
+
 ## CurseForge API (for finding/downloading exact files)
 
 - Needs an API key — already mounted in the container at `/run/secrets/cf_api_key`
   (from `CF_API_KEY_FILE`). Query it WITHOUT reading the secret yourself:
   `docker exec minecraft-atm10aero sh -c 'curl -s -H "x-api-key: $(cat /run/secrets/cf_api_key)" "https://api.curseforge.com/v1/mods/search?gameId=432&searchFilter=<slug>&classId=<id>"'`
-- `classId`: 6 = mod, 12 = resource pack, 4471 = modpack.
+- `classId`: 6 = mod, 12 = resource pack, 4471 = modpack. ALWAYS pass `classId=6` when searching
+  a mod — slug search is fuzzy and otherwise returns a wall of unrelated modpacks (e.g.
+  `searchFilter=ars-sable` matched ~50 packs). If the exact slug still doesn't surface, retry
+  space-separated (`ars sable`) or check Modrinth.
 - Files by project: `.../v1/mods/<id>/files?gameVersion=1.21.1`; download URL via
   `.../v1/mods/<id>/files/<fileId>` → `downloadUrl` (edge.forgecdn.net).
+- **Changelog:** `.../v1/mods/<id>/files/<fileId>/changelog` → `{"data":"<html>"}` (strip `<br>`/tags,
+  html.unescape). The file-detail endpoint does NOT include the changelog. Use it to diff pack
+  versions (e.g. 0.5.1 → 0.6.1). (The pack's GitHub `CHANGELOG.md` is usually a stub.)
+- The CF *website* blocks curl/web_extract (Cloudflare challenge, ~5 KB stub). Go via the API
+  (key required) or the pack's GitHub repo (`raw.githubusercontent.com/AllTheMods/ATM-10-a/...`
+  mirrors config/kubejs + CHANGELOG.md; the mod-suggestion list lives in issue #1).
 - Modrinth needs NO key and is easier for resource packs: `api.modrinth.com/v2/project/<slug>/version`.
 
 ## Pitfalls
@@ -95,3 +158,6 @@ not via log grep.
 ## Reference files
 
 - `references/pregen-and-distant-horizons.md` — exact CF file IDs/versions for Chunky/C2ME/DH on 1.21.1 NeoForge, full Chunky + DH LOD command sequence, radius/time guidance, client shader caveats.
+- `references/shareable-modpack.md` — build a shareable PrismLauncher/CurseForge-format modpack from the itzg server: version pinning, full-zip recipe, client-vs-server extras, distribution, docker-exec CF API quoting pitfall.
+- `references/shareable-modpack-export.md` — build a PrismLauncher-importable CurseForge-format pack from an itzg AUTO_CURSEFORGE server: metadata files to read, CF API downloadUrl, manifest+overrides rebuild, bundling extra mods into overrides/mods/, version-pinning and distribution pitfalls.
+- `references/pack-version-upgrade.md` — bump the pack version on an AUTO_CURSEFORGE server (restart pulls latest): backup-first sequence, "Re-installing Forge" signal, manual-mods-survive + removed-mods-cleaned, verification steps.
