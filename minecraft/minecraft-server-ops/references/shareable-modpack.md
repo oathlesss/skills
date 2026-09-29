@@ -16,6 +16,44 @@ the few **client-required manual mods**. Two valid deliverables:
    ~360 KB and fit through Discord directly; CF's CDN serves the 400+ mods faster than anything
    you'd self-host.
 
+## Which import format for which launcher (matrix)
+
+Two pack formats exist, and NO single format imports into all three launchers:
+
+| Format | CurseForge app | Modrinth app | PrismLauncher |
+|---|---|---|---|
+| CurseForge `.zip` (manifest.json + modlist.html + overrides/) | ✅ | ❌ | ✅ |
+| Modrinth `.mrpack` (modrinth.index.json + overrides/) | ❌ | ✅ | ✅ |
+
+PrismLauncher imports BOTH. So to cover "curseforge/modrinth/prismlauncher" you ship **two
+files**: a CF `.zip` AND a self-contained `.mrpack`. A `.mrpack` converter for a CF-only pack
+(existing CF zip → mrpack) has to bundle everything (the pack isn't on Modrinth to reference),
+so the `.mrpack` ends up ~10x larger than the CF `.zip` (references nothing, holds every jar).
+
+## .mrpack (Modrinth format) — self-contained recipe
+
+For a CurseForge-only pack (ATM10 Aeronautics is NOT on Modrinth), the `.mrpack` must bundle
+every mod jar itself. `modrinth.index.json` declares the loader/version; `overrides/` holds
+the actual instance files:
+
+```python
+index = {
+  "formatVersion": 1, "game": "minecraft",
+  "versionId": "0.6.1-oathless", "name": "ATM10 Aeronautics (Oathless)",
+  "summary": "...", "files": [],
+  "dependencies": {"minecraft": "1.21.1", "neoforge": "21.1.250"},
+}
+# zip: modrinth.index.json at root + every mod/config/kubejs under overrides/
+```
+
+`files: []` with everything under `overrides/` is valid — the launcher just copies `overrides/`
+over the instance. No Modrinth project/version ID lookups needed. Use python `zipfile` (the `zip`
+CLI is often absent on this box).
+
+The CF `.zip` path stays small because it references the 400+ mods by CF project/file ID; the
+`.mrpack` is large because it can't. Both get pushed to the same Forgejo repo (direct commit of
+the big binary, matching the resourcepack repo convention).
+
 ## Version-pinning gotcha (critical)
 
 The server stays on the version it was installed at; CF's "latest" moves on. Server ran **0.5.1**
@@ -64,6 +102,41 @@ keeps the zip redistribution-compliant.
 Only bundle what clients NEED to join: content mods that add blocks/items (AppliedFlux,
 advancedae_addon). Server-side perf/pregen mods (Chunky, C2ME, Distant Horizons server jar) don't
 gate joining and shouldn't be forced on clients (DH is optional both sides).
+
+## Launcher × format matrix (covers all three launchers = ship TWO files)
+
+| File | Imported by | Size |
+|---|---|---|
+| CurseForge-format `.zip` (`manifest.json` + `modlist.html` + `overrides/`) | **CurseForge app**, PrismLauncher | ~105 MB (references CF; mods downloaded at install) |
+| Modrinth `.mrpack` (`modrinth.index.json` + `overrides/`) | **Modrinth app**, PrismLauncher | ~959 MB self-contained (all jars bundled) |
+
+PrismLauncher imports BOTH — it's the one-launcher-for-everything answer. No single format
+covers all three launchers, so ship both. ATM10 Aeronautics is CurseForge-only (not on Modrinth),
+so the `.mrpack` must be self-contained (bundle every mod in `overrides/mods/` with an empty
+`files: []` in the index) — there's no Modrinth project to reference.
+
+### Self-contained `.mrpack` build recipe (no Modrinth ID lookup needed)
+
+```python
+import zipfile, os, json
+index = {
+  "formatVersion": 1, "game": "minecraft",
+  "versionId": "0.6.1-oathless", "name": "ATM10 Aeronautics (Oathless)",
+  "summary": "…", "files": [],
+  "dependencies": {"minecraft": "1.21.1", "neoforge": "21.1.250"},
+}
+with zipfile.ZipFile('pack.mrpack','w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+    z.writestr('modrinth.index.json', json.dumps(index, indent=2))
+    for d in ['mods','config','defaultconfigs','kubejs','resourcepacks']:
+        for dp,_,fn in os.walk(os.path.join('/data', d)):
+            for f in fn:
+                p = os.path.join(dp, f)
+                z.write(p, 'overrides/' + os.path.relpath(p, '/data'))
+```
+
+`files: []` + everything under `overrides/` = fully self-contained; the launcher copies
+`overrides/` over the instance after resolving dependencies (minecraft + neoforge). Mods bundled
+in `overrides/mods/` load fine. Adding one manual jar = add it to `overrides/mods/` and re-zip.
 
 ## Distribution
 

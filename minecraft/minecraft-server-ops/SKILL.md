@@ -1,7 +1,7 @@
 ---
 name: minecraft-server-ops
 category: minecraft
-description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-server on a homelab box): assess whether hardware can handle a modpack, tune performance, pre-generate the world, manage Distant Horizons LODs, and add/remove mods on an AUTO_CURSEFORGE container. Trigger on server performance questions, 'can my server run this pack', pregen, world generation, Distant Horizons, or mod-management requests."
+description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-server on a homelab box): assess whether hardware can handle a modpack, tune performance, pre-generate the world, manage Distant Horizons LODs, add/remove mods on an AUTO_CURSEFORGE container, add voice chat (Plasmo Voice) with its UDP port, and export the pack as an importable CurseForge .zip or Modrinth .mrpack. Trigger on server performance questions, 'can my server run this pack', pregen, world generation, Distant Horizons, mod-management requests, voice chat setup, or 'make the pack importable'."
 ---
 
 # Minecraft Server Operations
@@ -153,6 +153,16 @@ docker-exec CF API quoting pitfall are in the reference.
 - **Background watcher scripts: `exec >>log 2>&1` triggers false "completed" notifications.** A `terminal(background=true, notify_on_complete=true)` process gets reported as `exit code None` ~30s in if the script redirects stdout with `exec` — that closes the pipe the process manager watches. Use `log() { echo "$*" | tee -a "$LOG"; }` and keep the pipe open. Also: `docker logs` is the *full history*, so a completion grep can match a prior boot — poll for a fresh signal (RCON `list` returning `players online`) instead.
 - **Long pregen watchers can get orphaned/reaped while sleeping.** A `sleep 300` polling loop may be reported dead even when the target task (Chunky, running *inside* the server process) is fine. Design the watcher to be re-runnable: killing and relaunching it loses nothing because the actual task lives in the server, not the watcher.
 - **"No 'can't keep up' yet = fine"** — a fresh 5MB world proves nothing; stress only shows after exploration.
+- **Recreating a container after a compose change (ports/env/volumes):** `docker compose up -d` is
+  refused by the terminal tool (long-lived-process guard). And `docker start <name>` does NOT apply
+  config changes — it just restarts the existing container. To apply a compose edit (e.g. adding or
+  removing a UDP port mapping), recreate without the `up` keyword — all three return instantly:
+  `docker rm -f <name> && docker compose create <name> && docker start <name>`. Data volumes persist
+  across the rm/create (AUTO_CURSEFORGE re-syncs mods on boot; manual jar drops survive).
+- **Removing a mod leaves a benign `modid (version X -> MISSING)` WARN** in the boot log under
+  "version differences that were not resolved". It's NeoForge noticing the mod-list delta between
+  boots — harmless, clears next boot. Don't chase it; confirm removal via `find /data -iname '*modname*'`
+  (empty) + mod-count, not by grepping the log.
 - **Trusting a modpack's bundled perf mods** — verify they actually load (servercore/ferrite present ≠ tuned).
 
 ## Reference files
@@ -160,4 +170,7 @@ docker-exec CF API quoting pitfall are in the reference.
 - `references/pregen-and-distant-horizons.md` — exact CF file IDs/versions for Chunky/C2ME/DH on 1.21.1 NeoForge, full Chunky + DH LOD command sequence, radius/time guidance, client shader caveats.
 - `references/shareable-modpack.md` — build a shareable PrismLauncher/CurseForge-format modpack from the itzg server: version pinning, full-zip recipe, client-vs-server extras, distribution, docker-exec CF API quoting pitfall.
 - `references/shareable-modpack-export.md` — build a PrismLauncher-importable CurseForge-format pack from an itzg AUTO_CURSEFORGE server: metadata files to read, CF API downloadUrl, manifest+overrides rebuild, bundling extra mods into overrides/mods/, version-pinning and distribution pitfalls.
+- `references/voice-chat-plasmo-voice.md` — add Plasmo Voice (proximity voice chat): the UDP-port gotcha (MC port is TCP-only; voice needs `25565/udp`), compose recreate sequence (`docker start` won't re-apply ports), config, verification, router/firewall flag.
 - `references/pack-version-upgrade.md` — bump the pack version on an AUTO_CURSEFORGE server (restart pulls latest): backup-first sequence, "Re-installing Forge" signal, manual-mods-survive + removed-mods-cleaned, verification steps.
+- `references/voice-chat.md` — add/remove Plasmo Voice or Simple Voice Chat: the UDP port (not TCP!) gotcha, config fields, removal procedure, and the benign `-> MISSING` WARN after removal.
+- `references/full-self-contained-zip.md` — build the ~1GB flat zip with every jar bundled (no CurseForge resolution): which dirs to include/exclude, `python3 zipfile` recipe (the `zip` binary is absent on this box), observed sizes, voice-chat check, and distribution-vs-manifest-pack distinctions.
