@@ -138,6 +138,39 @@ with zipfile.ZipFile('pack.mrpack','w',zipfile.ZIP_DEFLATED,compresslevel=6) as 
 `overrides/` over the instance after resolving dependencies (minecraft + neoforge). Mods bundled
 in `overrides/mods/` load fine. Adding one manual jar = add it to `overrides/mods/` and re-zip.
 
+## Launcher import matrix (covers CurseForge + Modrinth + PrismLauncher)
+
+No single format imports into all three. You need **two files**:
+
+| File | Imported by |
+|---|---|
+| CF-format `.zip` (`manifest.json` + `modlist.html` + `overrides/`) | **CurseForge app**, **PrismLauncher** |
+| Modrinth `.mrpack` (`modrinth.index.json` + `overrides/`) | **Modrinth app**, **PrismLauncher** |
+
+PrismLauncher imports BOTH — recommend it as the one-launcher answer. Note: ATM10 packs are **CurseForge-only** (not on Modrinth), so the `.mrpack` must be fully self-contained (all mods bundled) rather than reference Modrinth IDs.
+
+## Self-contained `.mrpack` build recipe
+
+```python
+import zipfile, json, os
+SRC = '/home/ruben/homeserver/minecraft-atm10aero/data'
+index = {
+    "formatVersion": 1, "game": "minecraft", "versionId": "0.6.1-oathless",
+    "name": "ATM10 Aeronautics (Oathless)", "summary": "...",
+    "files": [],  # empty => no Modrinth downloads; overrides/ carries everything
+    "dependencies": {"minecraft": "1.21.1", "neoforge": "21.1.250"}
+}
+with zipfile.ZipFile('pack.mrpack', 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+    z.writestr('modrinth.index.json', json.dumps(index, indent=2))
+    for d in ['mods', 'config', 'defaultconfigs', 'kubejs', 'resourcepacks']:
+        for dp, dn, fn in os.walk(os.path.join(SRC, d)):
+            for f in fn:
+                full = os.path.join(dp, f)
+                z.write(full, 'overrides/' + os.path.relpath(full, SRC))
+```
+
+Key facts: empty `files[]` + everything under `overrides/` = valid self-contained mrpack. Loader version must be exact (`neoforge: 21.1.250`). Result ~960 MB (jars are already deflate-compressed, zip gains nothing). The CF `.zip` stays ~105 MB because the launcher re-downloads the 400 mods from CF; the `.mrpack` is the big self-contained mirror. When a server-side mod is upgraded (e.g. Distant Horizons), rebuild the `.mrpack` from the live `data/` dir AND swap the jar in the CF `.zip`'s `overrides/mods/` — but skip the CF swap if the mod was never in the CF zip (client-optional mods like DH only ever live in the `.mrpack`).
+
 ## Distribution
 
 The full zip (~100 MB) exceeds Discord's 25 MB attachment cap. Options: Forgejo release on

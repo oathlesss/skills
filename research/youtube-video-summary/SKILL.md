@@ -165,11 +165,13 @@ Produce a clear, scannable summary:
 ## Pitfalls
 
 - **VTT duplication**: Auto-generated captions repeat every line twice. If you don't deduplicate, the summary will read like gibberish with doubled text.
-- **`read_file` truncates single-line files**: After deduplication, the clean text is a single line (lines joined with spaces). `read_file` truncates to ~500 chars for files with no newlines. Always split into sentence-based chunks and write each chunk as its own file with proper line breaks before reading. See Step 6 for the sentence-splitting script.
+- **`read_file` truncates single-line files**: After deduplication, the clean text is a single line (lines joined with spaces). `read_file` truncates to ~500 chars for files with no newlines. Two fixes: (a) split into sentence-based chunks (Step 6), or (b) **preferred — wrap with `fold -w 110 -s <file> > <file>_wrapped.txt`, then read the wrapped file.** `read_file` returns the FULL content of a wrapped file. Use `fold` whenever delegating to subagents — a single full-file read beats chunk-reassembly and avoids subagents independently re-discovering the truncation issue.
 - **No subtitles at all**: Some videos have no captions. Tell the user plainly — don't try to fabricate a summary from metadata alone.
 - **JS runtime warning**: yt-dlp may warn about missing JavaScript runtime. This is safe to ignore for subtitle-only extraction.
 - **ffmpeg missing**: yt-dlp may warn about ffmpeg not found. Only matters for format conversion (SRT). VTT is fine as-is.
 - **Long videos**: A 45-minute video produces ~500KB of VTT and ~58K chars of deduplicated text. Always chunk.
+- **Terminal rejects `&` backgrounding**: a command containing `... &` / `wait` fails with "Foreground command uses '&' backgrounding." For parallel batch work use `xargs -P N` (or write a small `.sh` script and run it). The old Step 8 loop used `&` and would fail — the current command uses `xargs -P`.
+- **Large playlists (20+ episodes)**: a full series can be ~800K chars of transcript — too much for one context. See `references/large-playlist-pipeline.md` for the proven enumerate → `xargs` download → bulk VTT parse → parallel `delegate_task` summarization → synthesize workflow.
 - **Auto-caption quality**: YouTube's speech-to-text makes errors, especially with mod names, technical terms, and fast speech. Flag uncertainty when the transcript seems garbled.
 - **Modpack videos may show mods not in the pack**: YouTubers often manually add mods to their instance and present tips as if they're vanilla-pack features. When summarizing a video about a specific modpack, cross-check named mods against the pack's official modlist (GitHub repo, CurseForge/Modrinth manifest) before presenting those mods as part of the pack. Failing to do this produces misleading summaries that erode user trust.
 - **Language selection**: Default to `en`. If the user asks for another language, use that language code instead.
@@ -184,11 +186,12 @@ When the user wants several videos or an entire playlist summarized, download al
 # Step 1: Extract all video IDs from the playlist
 yt-dlp --flat-playlist --print "%(id)s" '<PLAYLIST_URL>' 2>/dev/null > /tmp/video_ids.txt
 
-# Step 2: Download all captions in parallel
-cd /tmp && while read vid; do
-  yt-dlp --skip-download --write-auto-subs --sub-lang en --output "/tmp/yt_vid_${vid}" "https://youtu.be/${vid}" 2>&1 | grep -E '(Downloading|ERROR|Writing|has no)' &
-done < /tmp/video_ids.txt
-wait
+# Step 2: Download all captions in parallel.
+# IMPORTANT: Hermes' terminal tool REJECTS shell `&` backgrounding in foreground
+# mode ("Foreground command uses '&' backgrounding"). Use `xargs -P` for parallel
+# work instead of the `... & ; wait` pattern.
+grep -v 'NA' /tmp/video_ids.txt | xargs -P 8 -I{} bash -c \
+  'yt-dlp --skip-download --write-auto-subs --sub-lang en --output "/tmp/yt_vid_{}" "https://youtu.be/{}" >/dev/null 2>&1'
 ```
 
 **From explicit video IDs:**

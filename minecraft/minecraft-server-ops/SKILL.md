@@ -104,6 +104,19 @@ C2ME shows harmless `@Mixin target ... not found` WARNs for client-side classes 
 has no client) — expected, not a bug. Detect boot-complete via RCON `list` responding,
 not via log grep.
 
+### Removing a manually-added mod = delete the jar + its leftover config
+
+Manual adds leave **orphaned config files** behind after the jar is gone (`config/*.toml`,
+`config/<mod>/` dirs) — they are NOT cleaned automatically. After deleting a jar, sweep
+`docker exec <c> sh -c 'ls /data/config/'` and remove leftovers matching the removed mod.
+CAREFUL: some configs belong to mods that ARE in the official pack. Check
+`.curseforge-manifest.json` before deleting — e.g. `sable` core is an official pack mod, so
+its `sable-*.toml` configs must NOT be removed even though the manual-add `ars_sable` addon
+was. After removal the next boot logs a benign `<modid> (version X -> MISSING)` under a
+`version differences that were not resolved` WARN — that's NeoForge's version tracker noticing
+the mod list changed, NOT a crash. It clears itself. Back up the world + mods + configs before
+any destructive removal (tar the data dir subfolders), so content-mod blocks can be restored.
+
 ## Exporting a shareable PrismLauncher/CurseForge modpack
 
 To hand friends an importable modpack matching the server, don't rebuild from scratch:
@@ -147,6 +160,7 @@ docker-exec CF API quoting pitfall are in the reference.
 ## Pitfalls
 
 - **Restart after `deploy.sh up` fails with `not a directory: ... cf_api_key.txt`.** `deploy.sh` decrypts SOPS secrets only for `up`, then CLEANS them up — so `docker compose restart minecraft-atm10aero` fails because the bind-mounted `cf_api_key.txt` is gone and Docker creates an empty *directory* in its place. Fix: (1) `sudo rmdir ~/homeserver/secrets/cf_api_key.txt` to remove the placeholder dir; (2) re-decrypt the secrets the container bind-mounts/env-files via `~/.local/bin/sops --decrypt ...` (don't read the values); (3) `docker start minecraft-atm10aero` (NOT `docker compose up -d` — the terminal tool flags that as a long-lived process and refuses; `docker start <name>` returns instantly).
+- **Changing published ports requires RECREATING the container, not restarting it.** `docker start <name>` reuses the existing container — fine for jar/env changes on the bind mount, but it does NOT apply a new or removed `ports:` mapping. To change ports without tripping the terminal tool's long-lived-process guard: `docker rm -f <name>` → `docker compose create <name>` → `docker start <name>` (all three return instantly). Canonical case is voice chat: Minecraft = TCP 25565, Plasmo Voice = UDP 25565 — same port number, different protocol, both mappings must be published.
 - **Conflating DH pregen with world pregen** — DH LODs don't create real chunks. Chunky is the lag fix.
 - **Watching boot logs: don't grep for "ERROR".** During mod loading, normal WARN lines contain the literal string `ERROR: No value present` (Moonlight / registry lookups). A crash-scan like `grep -iE "error|fatal|crash|caused by|failed to start"` false-positives on those. Detect boot-complete via the `Done (Ns)!` line or RCON actually responding (`rcon-cli list`); detect real crashes via `FATAL`, `This crash report`, or `A fatal error`. Also: `docker logs` is the *full history*, so `grep -c "Done"` can match a prior boot — confirm the current boot via RCON, not log grep.
 - **Installing DH server-side on a small box** — wasteful; keep DH client-only, pregen LODs per-client.
@@ -164,13 +178,18 @@ docker-exec CF API quoting pitfall are in the reference.
   boots — harmless, clears next boot. Don't chase it; confirm removal via `find /data -iname '*modname*'`
   (empty) + mod-count, not by grepping the log.
 - **Trusting a modpack's bundled perf mods** — verify they actually load (servercore/ferrite present ≠ tuned).
+- **"Network protocol error" / connection reset on join = Distant Horizons version mismatch.** When a client's DH jar doesn't match the server's, the server log shows `Failed to process a synchronized task of the payload: distant_horizons:msg` → `IncompatibleMessageInternalEvent` → `Connection reset by peer` (older server rejecting a newer client). The reverse (newer server, older client) looks different: clean `Player [x] joined` DH handshake, ~30–60s of play, then clean `lost connection: Disconnected` with NO server-side error — the CLIENT crashes. Fix is always the same: align both sides to one DH version. As of Sept 2026 the `3.3.x` line (3.3.3) is the stable release line; `3.2.0-b` and earlier are old betas. Note 3.3.3 bumps DH config version 4→5 and resets client config. DH is client-optional, so only the `.mrpack` (server mirror) bundles it — never the CF `.zip`, which carries only client-required extras.
+- **A mod that needs a NEW port mapping (voice chat, web UI) requires container RECREATE, not restart.** Port bindings are set at container-create time; `docker restart` won't pick up a compose port change. Use `docker rm -f <name> && docker compose create <name> && docker start <name>` (all return instantly — `docker compose up -d` trips the long-lived-process guard). For Plasmo Voice specifically: MC uses TCP 25565, but voice needs a SEPARATE `25565:25565/udp` mapping — TCP forwarding does NOT carry UDP. Plasmo Voice default `port=0` rides the MC port over UDP; config lives at `config/plasmovoice/server/config.toml`; `client_mod_required=false` lets players without the mod still join. Removal = delete the jar + generated `config/plasmovoice/` dir + revert the port line + recreate; the leftover `plasmovoice (version X -> MISSING)` log line afterward is a benign NeoForge version-diff warning that clears on its own.
 
 ## Reference files
 
 - `references/pregen-and-distant-horizons.md` — exact CF file IDs/versions for Chunky/C2ME/DH on 1.21.1 NeoForge, full Chunky + DH LOD command sequence, radius/time guidance, client shader caveats.
+- `references/performance-mod-gaps.md` — which perf mods are already in the pack vs. genuinely missing (server-side: Lithium/ServerCore/Noisium; client-side rendering mods are deliberately absent). Verify availability via Modrinth API.
 - `references/shareable-modpack.md` — build a shareable PrismLauncher/CurseForge-format modpack from the itzg server: version pinning, full-zip recipe, client-vs-server extras, distribution, docker-exec CF API quoting pitfall.
 - `references/shareable-modpack-export.md` — build a PrismLauncher-importable CurseForge-format pack from an itzg AUTO_CURSEFORGE server: metadata files to read, CF API downloadUrl, manifest+overrides rebuild, bundling extra mods into overrides/mods/, version-pinning and distribution pitfalls.
 - `references/voice-chat-plasmo-voice.md` — add Plasmo Voice (proximity voice chat): the UDP-port gotcha (MC port is TCP-only; voice needs `25565/udp`), compose recreate sequence (`docker start` won't re-apply ports), config, verification, router/firewall flag.
 - `references/pack-version-upgrade.md` — bump the pack version on an AUTO_CURSEFORGE server (restart pulls latest): backup-first sequence, "Re-installing Forge" signal, manual-mods-survive + removed-mods-cleaned, verification steps.
+- `references/voice-chat-and-network-debugging.md` — Plasmo Voice setup (UDP port, config), and the "client crashes with network protocol error = mod version mismatch" debugging path (Distant Horizons `IncompatibleMessageInternalEvent` signature, the silent variant, version notes).
+- `references/mrpack-from-curseforge-pack.md` — build a self-contained Modrinth `.mrpack` from a CurseForge-only pack (empty `files[]` + everything under `overrides/`); launcher-format coverage matrix.
 - `references/voice-chat.md` — add/remove Plasmo Voice or Simple Voice Chat: the UDP port (not TCP!) gotcha, config fields, removal procedure, and the benign `-> MISSING` WARN after removal.
 - `references/full-self-contained-zip.md` — build the ~1GB flat zip with every jar bundled (no CurseForge resolution): which dirs to include/exclude, `python3 zipfile` recipe (the `zip` binary is absent on this box), observed sizes, voice-chat check, and distribution-vs-manifest-pack distinctions.
