@@ -50,6 +50,11 @@ chunks instead of re-worldgenning). Exact version numbers and the full command
 sequence live in `references/pregen-and-distant-horizons.md` — read it before running
 anything; version IDs drift across MC versions and must be verified against the CF API.
 
+To verify a Chunky task actually finished (and WHEN): Minecraft log lines carry only `[HH:MM:SS]`, so
+use `docker logs --timestamps <c> | grep -i 'chunky.*Task finished'` to get the real date. The completion
+line is `[Chunky] Task finished for minecraft:overworld. Processed: N chunks (100.00%), Total time: ...`.
+A Chunky task is per-dimension — "overworld 100%" does NOT mean nether/end were pregenerated.
+
 ## Finding the exact MC + NeoForge version + pack identity
 
 Never guess the version when adding mods or matching a client to the server. Read it from the
@@ -140,6 +145,12 @@ docker-exec CF API quoting pitfall are in the reference.
 
 ## CurseForge API (for finding/downloading exact files)
 
+- **No-key version check — cfwidget.** "Is my pack on the latest version?" does NOT need the API
+  key. `curl https://api.cfwidget.com/minecraft/modpacks/<slug>` returns full project JSON with a
+  `files[]` array (newest first): `files[0].display` = latest release string, plus `uploaded_at`
+  and `versions[]`. Compare against the server's `.install-curseforge.env` `MODPACK_VERSION`.
+  Confirmed for `all-the-mods-10-aeronautics` (project id 1644918). Needs the EXACT slug — a
+  fuzzy/unknown slug returns empty JSON. The CF website + CF API both block keyless curl; cfwidget is open.
 - Needs an API key — already mounted in the container at `/run/secrets/cf_api_key`
   (from `CF_API_KEY_FILE`). Query it WITHOUT reading the secret yourself:
   `docker exec minecraft-atm10aero sh -c 'curl -s -H "x-api-key: $(cat /run/secrets/cf_api_key)" "https://api.curseforge.com/v1/mods/search?gameId=432&searchFilter=<slug>&classId=<id>"'`
@@ -159,6 +170,9 @@ docker-exec CF API quoting pitfall are in the reference.
 
 ## Pitfalls
 
+- **Mod jar filenames contain apostrophes (e.g. `L_Ender's Cataclysm 1.21.1-3.33.jar`).** `ls mods/*.jar | xargs`
+  dies with "unmatched single quote". List/sort/count mod jars with Python instead:
+  `python3 -c "import os; print('\n'.join(sorted(f for f in os.listdir('mods') if f.endswith('.jar'))))"`.
 - **Restart after `deploy.sh up` fails with `not a directory: ... cf_api_key.txt`.** `deploy.sh` decrypts SOPS secrets only for `up`, then CLEANS them up — so `docker compose restart minecraft-atm10aero` fails because the bind-mounted `cf_api_key.txt` is gone and Docker creates an empty *directory* in its place. Fix: (1) `sudo rmdir ~/homeserver/secrets/cf_api_key.txt` to remove the placeholder dir; (2) re-decrypt the secrets the container bind-mounts/env-files via `~/.local/bin/sops --decrypt ...` (don't read the values); (3) `docker start minecraft-atm10aero` (NOT `docker compose up -d` — the terminal tool flags that as a long-lived process and refuses; `docker start <name>` returns instantly).
 - **Changing published ports requires RECREATING the container, not restarting it.** `docker start <name>` reuses the existing container — fine for jar/env changes on the bind mount, but it does NOT apply a new or removed `ports:` mapping. To change ports without tripping the terminal tool's long-lived-process guard: `docker rm -f <name>` → `docker compose create <name>` → `docker start <name>` (all three return instantly). Canonical case is voice chat: Minecraft = TCP 25565, Plasmo Voice = UDP 25565 — same port number, different protocol, both mappings must be published.
 - **Conflating DH pregen with world pregen** — DH LODs don't create real chunks. Chunky is the lag fix.
