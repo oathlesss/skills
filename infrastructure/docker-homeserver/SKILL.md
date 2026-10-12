@@ -835,7 +835,7 @@ This prevents redundant jobs and identifies the biggest gaps first.
 
 #### 1. Minecraft World Backups (nightly)
 
-See the "World Backups" subsection under Minecraft Server above. Script at `templates/backup-minecraft.sh`.
+See the "World Backups" subsection under Minecraft Server above. Script at `templates/backup-minecraft.sh` (now in the minecraft-server-ops skill).
 
 #### 2. Disk Space Watchdog (every 1m)
 
@@ -1194,9 +1194,11 @@ docker rm minecraft
 # rm -rf ./minecraft/
 ```
 
-See `references/crafty-controller.md` for the full migration recipe, API exploration notes, and troubleshooting.
+See the minecraft-server-ops skill (`references/crafty-controller.md`) for the full migration recipe, API exploration notes, and troubleshooting.
 
 ## Minecraft Server — itzg/minecraft-server
+
+> **⚠️ Canonical home:** Minecraft server administration (itzg/AUTO_CURSEFORGE, performance, pregen, voice chat, pack export) is maintained in the **`minecraft-server-ops`** skill. The sections below are retained as a quick reference; session detail lives there.
 
 The stack uses `itzg/minecraft-server:latest` for the Minecraft service. This image supports vanilla, mod loaders (Forge, Neoforge, Fabric), and modpack platforms (CurseForge, Modrinth, FTB, Packwiz) via the `TYPE` or `MODPACK_PLATFORM` env var.
 
@@ -1229,7 +1231,7 @@ minecraft:
 
 ### Swapping Between Modpacks (replace one CurseForge pack with another)
 
-Full procedure in `references/minecraft-modpack-swap.md`. The three sharpest pitfalls when replacing a modpack on an existing itzg container:
+Full procedure in the minecraft-server-ops skill (`references/minecraft-modpack-swap.md`). The three sharpest pitfalls when replacing a modpack on an existing itzg container:
 
 - **Remove the old container by name, not via compose.** After you rename the service in `docker-compose.yml`, `docker compose rm -f <old-service>` fails with "no such service" (compose no longer knows the old name). Use `docker rm -f <old-container-name>`.
 - **A stray `secrets/cf_api_key.txt` *directory* blocks re-decrypt.** When the plaintext key file was cleaned up and the container restarted, Docker creates a root-owned directory at the bind-mount path. `sops --decrypt ... > secrets/cf_api_key.txt` then fails (can't write to a directory). Remove it first via `docker run --rm -v /home/ruben/homeserver:/host alpine:latest rm -rf /host/secrets/cf_api_key.txt`.
@@ -1279,7 +1281,7 @@ environment:
   CF_API_KEY_FILE: /run/secrets/cf_api_key   # ← no $ expansion ever
 ```
 
-Keep the raw key in a SOPS-encrypted text file (`secrets/cf_api_key.txt.sops`) alongside dotenv secrets. `deploy.sh` decrypts both formats. See `references/minecraft-curseforge-modpacks.md` for the full setup.
+Keep the raw key in a SOPS-encrypted text file (`secrets/cf_api_key.txt.sops`) alongside dotenv secrets. `deploy.sh` decrypts both formats. See the minecraft-server-ops skill (`references/minecraft-curseforge-modpacks.md`) for the full setup.
 
 ### Adding Individual Mods to a CurseForge Server
 
@@ -1447,7 +1449,7 @@ docker exec minecraft-modded rcon-cli "debug stop"
 
 ### Performance Feasibility: "Can this server handle this modpack?"
 
-Before answering whether the OptiPlex can run a given modpack, gather evidence — don't guess from the pack's reputation alone. Full diagnostic sequence + interpretation + remediation in `references/minecraft-server-performance.md`. The headline facts:
+Before answering whether the OptiPlex can run a given modpack, gather evidence — don't guess from the pack's reputation alone. Full diagnostic sequence + interpretation + remediation in the minecraft-server-ops skill (`references/minecraft-server-performance.md`). The headline facts:
 
 - **Single-thread CPU is the bottleneck, not RAM.** The i5-9500T (6c/6t, 35W "T" chip, 3.7GHz boost) is fine on RAM (30GB total) but weak on sustained single-core speed — exactly what Minecraft's tick loop needs. Judge a pack by chunk-gen load, not mod count alone.
 - **Skyblock packs are light; full-worldgen packs are heavy.** ATM10 To The Sky (void world) ≈ trivial chunk-gen. ATM10 Aeronautics (full worldgen + Twilight Forest + Aether + Undergarden + Deeper Darker + Ice & Fire Dreadlands + Allthemodium Beyond) ≈ near the ceiling for this box.
@@ -1533,7 +1535,7 @@ find "$BACKUP_DIR" -name '*.tar.gz' -mtime +7 -delete
 - 7-day rolling retention — small worlds (sub-50MB) mean negligible storage cost
 - Backups live at `~/homeserver/backups/minecraft/` — NOT inside a Docker volume, so they survive container rebuilds
 
-See `templates/backup-minecraft.sh` for the latest working version.
+See the minecraft-server-ops skill (`templates/backup-minecraft.sh`) for the latest working version.
 
 **Homepage:** List both servers separately on the dashboard with distinct descriptions:
 ```yaml
@@ -1712,21 +1714,9 @@ dockge:
 - `templates/push-uptime-kuma.sh` — starter script for Uptime Kuma push monitors via Hermes cron
 - `templates/deploy-sops.sh` — deploy wrapper: decrypts secrets → runs docker compose → cleans up plaintext
 - `templates/sops-config.yaml` — starter `.sops.yaml` (replace age public key placeholder)
-- `templates/backup-minecraft.sh` — nightly Minecraft world backup script, 7-day retention
 - `templates/push-disk-space.sh` — disk usage watchdog script for Uptime Kuma push monitors
 - `templates/migrate-secrets.py` — migration helper for moving secrets between formats
-- `references/crafty-controller.md` — Crafty Controller setup, migration from itzg, API notes, pitfalls
-- `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls
-- `references/minecraft-add-individual-mods.md` — adding specific mods to an AUTO_CURSEFORGE server (CF API workflow, `/download-url` vs `/download`, re-decrypt before restart)
-- `references/minecraft-itzg-add-mods.md` — add a single extra mod to a running itzg AUTO_CURSEFORGE server (CF API download flow, NeoForge modLoaderType=6, version matching)
-- `references/minecraft-curseforge-add-mod.md` — add individual CurseForge mods to a running AUTO_CURSEFORGE server via the CF API (slug→id, `modLoaderType` table, `/download-url` endpoint, extra-jar-survives-restart)
-- `references/minecraft-add-mods.md` — adding individual extra mods to a running AUTO_CURSEFORGE server (CF/Modrinth API download, version matching, restart re-decrypt dance, `.curseforge-manifest.json` format)
-- `references/minecraft-add-mods.md` — adding individual extra mods to an AUTO_CURSEFORGE server via CurseForge/Modrinth API (download-url endpoint, modLoaderType enum, restart+verify)
-- `references/minecraft-atm10-sky.md` — working ATM10 deploy config (server migrated to ATM10 Aeronautics, service `minecraft-atm10aero`, `CF_SLUG=all-the-mods-10-aeronautics`, 2026-09-06)
-- `references/minecraft-modpack-swap.md` — swapping one CurseForge modpack for another (procedure + pitfalls; orphaned-container removal, stray cf_api_key.txt dir, root-owned parent dir)
-- `references/minecraft-server-performance.md` — "can this box keep up with this modpack?" diagnostic sequence, signal interpretation, OptiPlex 3070 Micro hardware ceiling, and remediation levers
-- `references/minecraft-atm10-sky.md` — working ATM10 deploy config (historical — server is now ATM10 Aeronautics, slug `all-the-mods-10-aeronautics`)
-- `references/minecraft-plugins.md` — switching to Paper/Purpur for plugins, plugin repos, version checking
+- **Minecraft server administration → see the `minecraft-server-ops` skill.** Crafty Controller, itzg/AUTO_CURSEFORGE, per-mod add, modpack swap, performance feasibility, plugins, mc-router, whitelist, backups, and voice chat now live there (including the `crafty-controller.md` and `minecraft-*` references previously listed here).
 - `references/linux-hardware-inspection.md` — sysfs/proc-based hardware inspection without sudo (NVMe, SATA, USB, DMI, Docker storage)
 - `references/tailscale-reachability.md` — what's reachable via Tailscale IP + port vs what needs Caddy, and how to check with `ss -tlnp`
 - `references/optiplex-3070-micro-hardware.md` — Ruben's OptiPlex 3070 Micro: confirmed specs, 2.5" bay, Dell caddy/cable part numbers

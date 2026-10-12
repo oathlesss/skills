@@ -195,6 +195,33 @@ docker-exec CF API quoting pitfall are in the reference.
 - **"Network protocol error" / connection reset on join = Distant Horizons version mismatch.** When a client's DH jar doesn't match the server's, the server log shows `Failed to process a synchronized task of the payload: distant_horizons:msg` → `IncompatibleMessageInternalEvent` → `Connection reset by peer` (older server rejecting a newer client). The reverse (newer server, older client) looks different: clean `Player [x] joined` DH handshake, ~30–60s of play, then clean `lost connection: Disconnected` with NO server-side error — the CLIENT crashes. Fix is always the same: align both sides to one DH version. As of Sept 2026 the `3.3.x` line (3.3.3) is the stable release line; `3.2.0-b` and earlier are old betas. Note 3.3.3 bumps DH config version 4→5 and resets client config. DH is client-optional, so only the `.mrpack` (server mirror) bundles it — never the CF `.zip`, which carries only client-required extras.
 - **A mod that needs a NEW port mapping (voice chat, web UI) requires container RECREATE, not restart.** Port bindings are set at container-create time; `docker restart` won't pick up a compose port change. Use `docker rm -f <name> && docker compose create <name> && docker start <name>` (all return instantly — `docker compose up -d` trips the long-lived-process guard). For Plasmo Voice specifically: MC uses TCP 25565, but voice needs a SEPARATE `25565:25565/udp` mapping — TCP forwarding does NOT carry UDP. Plasmo Voice default `port=0` rides the MC port over UDP; config lives at `config/plasmovoice/server/config.toml`; `client_mod_required=false` lets players without the mod still join. Removal = delete the jar + generated `config/plasmovoice/` dir + revert the port line + recreate; the leftover `plasmovoice (version X -> MISSING)` log line afterward is a benign NeoForge version-diff warning that clears on its own.
 
+## Additional operations (absorbed from docker-homeserver)
+
+These topics previously lived under the docker-homeserver skill's Minecraft section; they're Minecraft-server-specific and now belong here. Session detail is in the re-homed references below.
+
+### Crafty Controller — DO NOT use (abandoned)
+Direct itzg containers are the default. Crafty's HTTPS-only server + self-signed cert + socat sidecar + Caddy reverse-proxy chain proved unfixable (CSRF/cookie failures, "Invalid token" on every API call). The user abandoned Crafty for two direct `itzg/minecraft-server` containers. Do not resurrect Crafty + socat without an explicit request. Full failure log: `references/crafty-controller.md`.
+
+### Multiple servers + domain routing (mc-router)
+For 2+ servers on one IP, players default to port 25565 — a second server on 25566 is never reached. mc-router (`itzg/mc-router`) reads the hostname from the Minecraft handshake and routes `mc.oathless.dev`→vanilla, `modded.oathless.dev`→modded. Servers drop their `ports:` mapping; mc-router takes 25565. Pitfall: set `SERVER_PORT` to match the mc-router backend port + `OVERRIDE_SERVER_PROPERTIES: true`, or the itzg health check pings the wrong port.
+
+### Whitelist management
+Two layers: RCON (`whitelist on`/`whitelist add`) is instant; `WHITELIST` + `ENFORCE_WHITELIST` env vars persist across recreation. `ENFORCE_WHITELIST` is ignored when `OVERRIDE_SERVER_PROPERTIES=false` — use RCON then. "That player does not exist" = invalid Mojang username (verify via `api.mojang.com/users/profiles/minecraft/<name>`).
+
+### RCON console + TPS
+`docker exec <c> rcon-cli "<cmd>"` gives a full console with no panel. TPS via RCON: `debug start` → sleep → `debug stop` (`spark tps` returns empty via RCON — chat-only output).
+
+### World backups
+Worlds have no built-in backup. Nightly tar.gz via `templates/backup-minecraft.sh` (7-day retention, `cronjob ... no_agent=true schedule="0 4 * * *"`). Backups go to `~/homeserver/backups/minecraft/`, outside the Docker volume.
+
+### Java version → itzg image tag
+| MC version | Image tag |
+|---|---|
+| 1.20.x Forge | `:java17` |
+| 1.21.x | `:java21` |
+| 26.x (latest) | `:java25` |
+Class-file version in errors: 61=Java17, 65=Java21, 69=Java25. `:latest` still uses Java 21 and cannot run MC 26.2.
+
 ## Reference files
 
 - `references/pregen-and-distant-horizons.md` — exact CF file IDs/versions for Chunky/C2ME/DH on 1.21.1 NeoForge, full Chunky + DH LOD command sequence, radius/time guidance, client shader caveats.
@@ -207,3 +234,11 @@ docker-exec CF API quoting pitfall are in the reference.
 - `references/mrpack-from-curseforge-pack.md` — build a self-contained Modrinth `.mrpack` from a CurseForge-only pack (empty `files[]` + everything under `overrides/`); launcher-format coverage matrix.
 - `references/voice-chat.md` — add/remove Plasmo Voice or Simple Voice Chat: the UDP port (not TCP!) gotcha, config fields, removal procedure, and the benign `-> MISSING` WARN after removal.
 - `references/full-self-contained-zip.md` — build the ~1GB flat zip with every jar bundled (no CurseForge resolution): which dirs to include/exclude, `python3 zipfile` recipe (the `zip` binary is absent on this box), observed sizes, voice-chat check, and distribution-vs-manifest-pack distinctions.
+- `references/crafty-controller.md` — Crafty Controller (abandoned): migration from itzg, socat sidecar, CSRF failures, why direct itzg won.
+- `references/minecraft-curseforge-modpacks.md` — full AUTO_CURSEFORGE reference, debugging, and pitfalls (CF_API_KEY_FILE, `$` expansion, world incompatibility).
+- `references/minecraft-modpack-swap.md` — swapping one CurseForge modpack for another (orphaned-container removal, stray cf_api_key.txt dir, root-owned parent dir).
+- `references/minecraft-server-performance.md` — "can this box keep up with this modpack?" diagnostic sequence, signal interpretation, OptiPlex 3070 Micro hardware ceiling, remediation levers.
+- `references/minecraft-plugins.md` — switching to Paper/Purpur for plugins, plugin repos, version checking.
+- `references/minecraft-atm10-sky.md` — working ATM10 deploy config (historical — server is now ATM10 Aeronautics, `CF_SLUG=all-the-mods-10-aeronautics`).
+- `references/minecraft-add-individual-mods.md`, `references/minecraft-itzg-add-mods.md`, `references/minecraft-curseforge-add-mod.md`, `references/minecraft-add-mods.md` — four near-duplicate session recipes for adding a single extra mod to a running itzg AUTO_CURSEFORGE server via the CF/Modrinth API (slug→id, `modLoaderType=6`, `/download-url` vs `/download`, re-decrypt before restart, `.curseforge-manifest.json`). Consolidate these four into one on next touch.
+- `templates/backup-minecraft.sh` — nightly Minecraft world backup script, 7-day retention.
