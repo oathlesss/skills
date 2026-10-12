@@ -18,15 +18,16 @@ the client-side rendering gap, not server-side.
 
 ## High-value server-side additions (NeoForge 1.21.1 builds exist)
 
-- **Lithium** — the biggest single tick-loop optimization. Meaningfully cuts "Can't keep up" lag.
+- **Radium / Nolijium** — the NeoForge packaging of **Lithium** (which is Fabric-only). Biggest single tick-loop optimization; meaningfully cuts "Can't keep up" lag. Radium = classic Forge port; Nolijium = newer NeoForge-native fork. Both have 1.21.1 NeoForge builds.
 - **ServerCore** — bundled server optimizations (entity ticking, hoppers, etc.).
 - **Noisium** — worldgen speedup (complements C2ME for exploration lag).
 
 Verify version availability via Modrinth API before adding:
 `curl -s "https://api.modrinth.com/v2/project/<slug>/version?game_versions=%5B%221.21.1%22%5D&loaders=%5B%22neoforge%22%5D"`
 
-⚠️ Lithium can clash with C2ME — add one at a time and check the boot log for conflicts
-before committing; don't blind-add all three.
+⚠️ Since 2026 Minecraft uses "26.x" versioning, a mod's LATEST release now targets 26.x — reading `data[0]` of `/version` is misleading. Always facet-filter by `game_versions` + `loaders` (as above); a `404` on `/project/<slug>` means CurseForge-only.
+
+⚠️ Radium/Nolijium (Lithium port) can clash with C2ME — add one at a time and check the boot log for conflicts before committing; don't blind-add all three. **Radium is INCOMPATIBLE with Create** — NeoForge logs `Mod 'create' is incompatible with 'radium'` and refuses to load; on any Create pack, skip Radium entirely (Noisium + Saturn + ServerCore + ModernFix carry the tick-loop wins).
 
 NOT worth it: Krypton (Fabric-only), ScalableLux (alpha), Debugify (Fabric-only).
 

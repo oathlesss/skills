@@ -122,6 +122,35 @@ was. After removal the next boot logs a benign `<modid> (version X -> MISSING)` 
 the mod list changed, NOT a crash. It clears itself. Back up the world + mods + configs before
 any destructive removal (tar the data dir subfolders), so content-mod blocks can be restored.
 
+## Building a custom modpack from scratch (TYPE=NEOFORGE)
+
+For a hand-curated pack (not a published CurseForge pack), skip AUTO_CURSEFORGE: use
+`TYPE=NEOFORGE` + `VERSION` + `NEOFORGE_VERSION` (pin to the source pack's exact
+`.neoforge-manifest.json` `forgeVersion` — don't trust memory) and drop jars into `data/mods/`.
+Fast path: copy a curated subset straight from the existing ATM10aero `mods/` dir (already
+version-matched), then **boot-iterate** — NeoForge's ModSorter lists all missing deps + incompatibilities
+at once, and `crash-reports/*.txt` reveals undeclared runtime deps (`NoClassDefFoundError`).
+Key 1.21.1 facts: Create is INCOMPATIBLE with Radium; Tectonic→Lithostitched; BOP→TerraBlender+GlitchCore;
+Ad Astra→common-storage-lib (not Botarium); shaders = Iris not Oculus; Plasmo Voice needs a dedicated
+UDP port because Sable/Create-Aeronautics grabs the MC port. For a 2nd server on one IP, prefer a
+Minecraft SRV record over mc-router. Full recipe + dependency map: `references/custom-modpack-build.md`.
+
+## Building a from-scratch custom modpack (curated subset)
+
+When the user wants a NEW custom pack (not extending an existing one), the laziest correct
+path is to **curate a subset of an existing pack's mods already on disk** rather than fetch
+150 jars from CF. Full workflow, dependency gotchas, and the importable-pack build are in
+`references/from-scratch-custom-pack.md`. Two pitfalls that WILL bite, plus a rule:
+
+- **Radium (Lithium port) is incompatible with Create** — NeoForge's ModSorter rejects it
+  ("create is incompatible with radium"). Drop Radium; Noisium/Saturn/ServerCore cover perf.
+- **Plasmo Voice's default `port=0` collides with Sable** (Create: Aeronautics' physics
+  engine) — both grab UDP on the MC port, voice fails "Failed to start the udp server". Give
+  Plasmo Voice a dedicated UDP port (e.g. 25567) + publish it; keep 25566/udp for Sable.
+- ⚠️ **Curation rule:** only include the user's EXPLICIT wishlist + essential deps/QoL/perf.
+  The user pushed back on kitchen-sink additions ("You added a lot of mods without my
+  input"). Present extras as a list for approval — don't silently include them.
+
 ## Exporting a shareable PrismLauncher/CurseForge modpack
 
 To hand friends an importable modpack matching the server, don't rebuild from scratch:
@@ -168,7 +197,61 @@ docker-exec CF API quoting pitfall are in the reference.
   mirrors config/kubejs + CHANGELOG.md; the mod-suggestion list lives in issue #1).
 - Modrinth needs NO key and is easier for resource packs: `api.modrinth.com/v2/project/<slug>/version`.
 
+## Building a custom / second modpack (TYPE=NEOFORGE + manual mods)
+
+For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
+**curate a subset of an existing pack's mods dir, then boot-iterate**. Full recipe:
+`references/custom-modpack-build.md`.
+
+1. **Check what's already on disk first.** ATM10 Aeronautics already ships Create +
+   Create: Aeronautics + Sable, Dyson Cube Project, Productive Bees + Trees, EnderIO,
+   AE2 + ~8 addons, Ars Nouveau + addons — most wishlists are ~95% covered by
+   `data/mods/`. Copy jars; don't re-fetch from CF/Modrinth.
+2. **Copy by EXACT filename** — ATM10aero jar names are mixed-case (`OctoLib-…`,
+   `Clumps-…`, `Glodium-…`, `SmartBrainLib-…`, `Patchouli-…`); a lowercase transcription
+   silently misses them. Diff copied count vs the manifest and fix.
+3. **itzg config for a plain NeoForge pack** (not AUTO_CURSEFORGE — that's only for
+   published CF packs): `TYPE=NEOFORGE`, `VERSION=1.21.1`, `NEOFORGE_VERSION=<x>` (read
+   the exact value from `data/.neoforge-manifest.json` `forgeVersion` — it's 21.1.250;
+   memory's "21.1.248" had drifted), `MEMORY=8G`, `SERVER_PORT=<n>`. Manual jar drops
+   into `data/mods/` work the same as AUTO_CURSEFORGE.
+4. **Boot-iterate.** First boot prints ALL missing mandatory deps at once
+   (`Mod ID: 'X', Requested by: 'Y'`) + incompatibilities. Fix all → reboot → the next
+   failure is usually a runtime `NoClassDefFoundError` (a lib ModSorter doesn't catch,
+   e.g. Lithostitched) → read `data/crash-reports/*.txt` (its "Mod List" is the ground
+   truth of what actually loaded). Converges in ~3 boots.
+5. **Second server on one IP → SRV record, not mc-router** (simpler, zero disruption to
+   the existing server): `_minecraft._tcp.<newhost> SRV 0 5 <port> <existing-host>`. New
+   server gets its own port (25566); players type `server.oathless.dev` with no port.
+
 ## Pitfalls
+
+- **Curate tightly — don't kitchen-sink a pack.** Ruben wants his explicit mod wishlist + load-bearing
+  essentials (JEI/Jade/map, FTB Chunks, Polymorph+AlmostUnified for recipe conflicts, the perf stack),
+  NOT a pile of "suggestions". He pushed back hard ("you added a lot of mods without my input") after a
+  broad build. When building a pack, present any additions beyond his list as a VETO LIST *before*
+  installing, and offer to strip to wishlist+essentials on request.
+- **Mod jar filenames contain apostrophes
+  incompatible with 'radium'` and refuses to load. On a Create pack, drop Radium entirely;
+  Noisium + Saturn + ServerCore + ModernFix carry the tick-loop wins. Don't blind-add
+  "Lithium/Radium" to a Create pack.
+- **Plasmo Voice collides with Create Aeronautics (Sable) on UDP.** Sable (Create
+  Aeronautics' physics lib) grabs UDP on the MC port; Plasmo Voice's default `port=0`
+  ("same as MC port") then fails with `[PlasmoVoice/] Failed to start the udp server`.
+  Fix: set `[host] port = 25567` (dedicated) in `config/plasmovoice/server/config.toml`
+  + publish that UDP port; keep the MC port's UDP mapping for Sable. Two UDP mods on one
+  port = one silently dies.
+- **Shaders on NeoForge 1.21.1 = Iris, NOT Oculus.** Oculus (Asek3's Forge port) has no
+  1.21.1 files on CF or Modrinth. Iris supports NeoForge natively
+  (`iris-neoforge-1.8.12+mc1.21.1.jar` is the stable line); pair with `iris-flw-compat`
+  for Create. Ship shaders OFF by default for low-end clients (Iris/Oculus is the #1 FPS killer).
+- **Distant Horizons is on Modrinth under slug `distanthorizons`** (no hyphen —
+  `distant-horizons` 404s). 3.3.3 is the stable 1.21.1 line; its GitLab release "assets"
+  hold only source archives, so fetch the jar from Modrinth/CF, not GitLab.
+- **1.21.1 NeoForge dependency map** (ModSorter/first-boot failures): BOP→terrablender+glitchcore;
+  Ad Astra→common-storage-lib (NOT botarium on 1.21.1); XNet→rftoolsbase;
+  Powah/AE2/ExtendedAE→guideme; IronJetpacks→cucumber (cucumber is NOT MA-only);
+  attributefix→prickle; Occultism→modonomicon; Tectonic→lithostitched.
 
 - **Mod jar filenames contain apostrophes (e.g. `L_Ender's Cataclysm 1.21.1-3.33.jar`).** `ls mods/*.jar | xargs`
   dies with "unmatched single quote". List/sort/count mod jars with Python instead:
@@ -222,8 +305,26 @@ Worlds have no built-in backup. Nightly tar.gz via `templates/backup-minecraft.s
 | 26.x (latest) | `:java25` |
 Class-file version in errors: 61=Java17, 65=Java21, 69=Java25. `:latest` still uses Java 21 and cannot run MC 26.2.
 
+## Building a custom from-scratch modpack (TYPE=NEOFORGE, curated)
+
+For a *from-scratch curated pack* (not AUTO_CURSEFORGE stock): copy a subset of an
+existing pack's `data/mods/` jars + fetch new mods (Modrinth keyless / CF via
+docker-exec), run `TYPE=NEOFORGE` + `VERSION` + `NEOFORGE_VERSION`, then boot-iterate —
+the `Missing or unsupported mandatory dependencies:` log lists every missing lib at once.
+Key gotchas: **Radium (Lithium port) is incompatible with Create** (drop it); **Create
+Aeronautics/Sable + Plasmo Voice both grab UDP on the MC port** (give voice a dedicated
+UDP port); Placebo is shared by Apotheosis AND FastFurnace/Workbench (don't remove it
+when dropping Apotheosis). Export self-contained importable packs (`files:[]` +
+`overrides/mods/`): CF `.zip` → CurseForge app + Prism, `.mrpack` → Modrinth + Prism.
+Full recipe + dependency table: `references/custom-modpack-build.md`.
+
+> ⚠️ Ruben wants wishlist-driven lean packs — build exactly what he lists. "Other mods
+> you might suggest" = propose a veto-list BEFORE adding, don't silently pad the pack.
+
 ## Reference files
 
+- `references/custom-modpack-build.md` — build a curated from-scratch modpack: subset-copy + fetch workflow, boot-iterate deps, dependency gotcha table, UDP port conflict, self-contained CF/mrpack export, shaders/DH source map.
+- `references/pregen-and-distant-horizons.md`
 - `references/pregen-and-distant-horizons.md` — exact CF file IDs/versions for Chunky/C2ME/DH on 1.21.1 NeoForge, full Chunky + DH LOD command sequence, radius/time guidance, client shader caveats.
 - `references/performance-mod-gaps.md` — which perf mods are already in the pack vs. genuinely missing (server-side: Lithium/ServerCore/Noisium; client-side rendering mods are deliberately absent). Verify availability via Modrinth API.
 - `references/shareable-modpack.md` — build a shareable PrismLauncher/CurseForge-format modpack from the itzg server: version pinning, full-zip recipe, client-vs-server extras, distribution, docker-exec CF API quoting pitfall.
@@ -242,3 +343,5 @@ Class-file version in errors: 61=Java17, 65=Java21, 69=Java25. `:latest` still u
 - `references/minecraft-atm10-sky.md` — working ATM10 deploy config (historical — server is now ATM10 Aeronautics, `CF_SLUG=all-the-mods-10-aeronautics`).
 - `references/minecraft-add-individual-mods.md`, `references/minecraft-itzg-add-mods.md`, `references/minecraft-curseforge-add-mod.md`, `references/minecraft-add-mods.md` — four near-duplicate session recipes for adding a single extra mod to a running itzg AUTO_CURSEFORGE server via the CF/Modrinth API (slug→id, `modLoaderType=6`, `/download-url` vs `/download`, re-decrypt before restart, `.curseforge-manifest.json`). Consolidate these four into one on next touch.
 - `templates/backup-minecraft.sh` — nightly Minecraft world backup script, 7-day retention.
+- `references/from-scratch-custom-pack.md` — build a NEW custom pack by curating a subset of an existing pack's mods: workflow, dependency gotchas (Radium×Create, BOP/Tectonic/AdAstra deps, Placebo dual-use), Plasmo Voice×Sable UDP conflict, Iris-vs-Oculus on 1.21.1, self-contained CF-zip/mrpack build, Forgejo large-binary distribution.
+- `references/custom-modpack-build.md` — build a from-scratch curated pack: subset-copy workflow, boot-iterate loop, keyless Modrinth download pattern, 1.21.1 dependency map, SRV routing, client-zip merge.
