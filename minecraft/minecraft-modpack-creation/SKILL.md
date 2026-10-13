@@ -62,7 +62,36 @@ A `404` on `/project/<slug>` = NOT on Modrinth → CurseForge-only (or distribut
 e.g. Distant Horizons via GitLab/CF). Confirm on CurseForge via the API (classId=6) or
 cfwidget (no key).
 
+## Does a specific PACK include mod X? (Modpack Index curl)
+
+When the question is "which packs include/avoid mod X" (e.g. "ATM10-like but no Apotheosis"),
+don't trust search snippets or pack descriptions. Query Modpack Index — its pack pages are
+server-rendered, so a plain curl + grep is authoritative, no browser or web-extract backend:
+
+```bash
+UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+curl -sL "https://www.modpackindex.com/modpack/<id>/<slug>" -A "$UA" -o /tmp/p.html
+grep -io '<modname-prefix>[a-z]*' /tmp/p.html | sort | uniq -c   # 0 matches = absent
+```
+
+Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
+- An invalid slug returns `404`, but a *stale* slug can silently redirect to a DIFFERENT pack's
+  page (seen: `enigmatica-10` → `Odystria II`). Always confirm the returned `<title>` matches
+  the pack you asked about before trusting the grep.
+- The GitHub-repo `modlist.html` for some packs (e.g. bigchadguys) is another curl-able source,
+  but watch the loader — the main repo may list the Fabric/Cobblemon variant, not the NeoForge
+  "Non-Cobblemon" one. Cross-check the title/loader.
+
 ## Pitfalls
+- **Only ship what the user explicitly asked for — don't pad the pack.** Every mod must trace to
+  the wishlist (or an explicitly requested add, e.g. Building Gadgets). Unrequested additions get
+  rejected — Apotheosis/Apothic suite + Occultism/Modonomicon/Ars Ocultas were pulled after the user
+  objected "you added a lot of mods without my input". Suggested-but-unrequested mods belong in a
+  *proposal list* for the user to approve, never in the assembled pack.
+- **Loader version pins get ignored by Prism** — a self-contained pack pinned to `neoforge-21.1.250`
+  still installs the LATEST NeoForge on the client, causing "Incompatible client! Please use NeoForge
+  X" + cascading channel errors (e.g. glitchcore:sync_config). See `minecraft-server-ops` pitfall
+  "Incompatible client! Please use NeoForge" for the fix (bump server to latest 21.1.x or pin client).
 - **Dyson Cube Project** (Buuz135, CurseForge, 1.21.1 NeoForge, "build a Dyson sphere around the
   sun") ≠ **The Dyson Sphere Project** (Modrinth, 1.20.1 Forge only). When a user says "Dyson",
   confirm which.
@@ -80,8 +109,20 @@ cfwidget (no key).
   answer.
 - **Overlapping recipes** (Create + AE2 + EnderIO + Mekanism all add ingots/crafting) → always
   include Polymorph + Almost Unified.
+- **Apotheosis is near-universal in 1.21 kitchen-sinks — verify before assuming a pack skips it.**
+  ATM10, FTB Evolution, Craftoria, Enigmatica 10, TNP Limitless 8, Spellbound Engineering,
+  Tecnomancia, and Firmament Industry ALL ship Apotheosis (+ the "Apothic" family: Apothic
+  Attributes, Apothic Enchanting, Apothic Spawners, Apothic Attractions, + Placebo lib). To get an
+  ATM10-scale pack without it you must strip it or nerf it — see
+  `references/apotheosis-free-pack-options.md` for the jar list, strip/nerf recipe, and verified
+  per-pack inclusion status. Ties into the "don't pad the pack" rule: Ruben has now pushed back on
+  Apotheosis twice (removed it from his own pack, then asked for an Apotheosis-free ATM10
+  alternative) — treat Apotheosis as opt-in, default OFF.
 
 ## Reference files
 - `references/1.21.1-neoforge-mod-availability.md` — verified availability/loader matrix for
   common tech-magic wishlist mods (CF-only vs Modrinth vs both), confirmed 1.21.1 NeoForge
   version pins, and the low-end client + server perf stack with verified slugs.
+- `references/apotheosis-free-pack-options.md` — the "Apothic" family jar list, strip/nerf recipe,
+  and verified per-pack Apotheosis inclusion status for 1.21 kitchen-sinks. Use when the user asks
+  for "ATM10-like but no Apotheosis" or any "which packs avoid mod X" question.

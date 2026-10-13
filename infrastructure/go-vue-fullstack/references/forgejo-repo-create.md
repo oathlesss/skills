@@ -89,4 +89,12 @@ Do NOT split extraction and usage across separate `terminal()` calls — the red
 - **`git init` defaults to `master`, not `main`** — this box's git has no `init.defaultBranch` set. A `git push -u <remote> main` right after `git init` fails with `src refspec main does not match any`. Fix: `git init -b main` (or `git branch -m main` before the first push). Always confirm the branch name with `git branch --show-current` before pushing.
 - **Redaction mangles `$(printf ...)` inside `write_file` content too** — not just `terminal` commands. This session saw the same `$(printf "protocol=...")` line land correct on disk on one write and get corrupted to `TOKEN=*** "protocol=..."` on the next (a bash syntax error on execution). Safest pattern: use `echo -e` (not `printf`) in the credential invocation, write the create/verify script to a file, run it, then `rm` it. `read_file` the script back before running if the job is multi-step.
 - **Large binaries are committed directly to git, no LFS.** `git-lfs` is not installed locally; the established convention on this instance is direct commit (the resourcepack repo holds a 126MB zip, the modpack repo a 958MB zip). For multi-hundred-MB pushes, set `git config http.postBuffer 524288000` first to avoid HTTP buffering stalls.
+- **Creating a release via API on an empty repo fails with 422 `"repo is empty"`.** A release
+  needs a commit to tag. Push at least one commit (e.g. a README) first, then
+  `POST /api/v1/repos/oathless/<repo>/releases` with `target_commitish: "main"`. For large
+  binary distribution, committing the files directly (git native auth — no token extraction)
+  is the more robust path than the release API, which requires the raw token and hits the
+  redaction pitfall above. Upload assets via
+  `POST /api/v1/repos/oathless/<repo>/releases/<id>/assets?name=<file>` only if you have the
+  token extraction working.
 - **The release API fails on an EMPTY repo** — `POST /repos/{o}/{r}/releases` returns HTTP 422 `{"message":"repo is empty"}` because a release must tag an existing commit. Push a README (or any commit) first, then create the release. For large-file distribution, prefer committing the binaries directly (git native auth, no `git credential fill` extraction) over the release-asset API — it sidesteps the token-redaction fight entirely.

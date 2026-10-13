@@ -11,6 +11,10 @@ Verified 2026-09 against the running ATM10 Aeronautics instance (1.21.1, NeoForg
 | Distant Horizons | `DistantHorizons-3.2.0-b-1.21.1-fabric-neoforge.jar` | 8389148 | 30 MB | beta (project id 508933) |
 
 > C2ME has NO stable release on 1.21.1 — alpha is expected, not a red flag.
+> Measured on a 281-mod pack (i5-9500T): Chunky single-threaded 4.6 chunks/s → ~47 chunks/s with
+> C2ME (~10x), collapsing a 2000-block-radius pregen from ~3h50m to ~20min.
+> **C2ME conflicts with `betterchunkloading`** (someaddon) — exclude it via `CF_EXCLUDE_MODS` before
+> adding C2ME (FML warns the combo "causes the world to save infinitely").
 > **DH: the 3.3.x line went STABLE in Sept 2026** (3.3.0 → 3.3.3, all `release`, not `-b-`).
 > `3.3.3-1.21.1` (2026-09-29) is current. The older `3.2.0-b` is a *beta* from July 2026 —
 > keep an eye on which build is actually installed, because DH's network protocol changes
@@ -72,6 +76,10 @@ Install jar, restart server, then via `docker exec minecraft-atm10aero rcon-cli 
 ```
 
 Monitor: `/chunky progress`, `/chunky pause`, `/chunky cancel`.
+
+> **Resume vs start:** if a previous task was interrupted (e.g. a restart to add C2ME),
+> `/chunky start` returns `A task was already started for this world. To continue running it,
+> type '/chunky continue'`. Use `/chunky continue` to resume — it skips already-generated chunks.
 
 > **`chunky config threads N` does NOT exist in 1.4.x** (returns "Incorrect argument for command"). Parallelism comes from C2ME, not a Chunky setting — don't waste time hunting for a thread knob.
 

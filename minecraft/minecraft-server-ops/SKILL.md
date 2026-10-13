@@ -7,9 +7,12 @@ description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-s
 # Minecraft Server Operations
 
 Operational knowledge for running Ruben's self-hosted Minecraft server(s) on the
-OptiPlex homelab. The primary instance is ATM10 Aeronautics (`minecraft-atm10aero`,
-itzg/minecraft-server:java21, AUTO_CURSEFORGE, `CF_SLUG=all-the-mods-10-aeronautics`,
-1.21.1 NeoForge 21.1.248, 10G RAM). Hardware: i5-9500T (6c/6t, 35W T-series),
+OptiPlex homelab. The primary instance is Enigmatica 10 (`minecraft-e10`,
+itzg/minecraft-server:java21, AUTO_CURSEFORGE, `CF_SLUG=enigmatica10`,
+1.21.1 NeoForge 21.1.252, 8G RAM) on 25565 = mc.oathless.dev. Historical: the
+Oathless Server Pack (world archived at `homeserver/minecraft-oathlesssp/data`) and
+ATM10 Aeronautics (`minecraft-atm10aero`, retired) — the latter is still referenced
+as the running example in several reference files below. Hardware: i5-9500T (6c/6t, 35W T-series),
 30GB RAM, NVMe.
 
 ## Key facts / mental model
@@ -49,6 +52,12 @@ Order matters: **real chunks first, then DH LODs** (DH can build LODs from exist
 chunks instead of re-worldgenning). Exact version numbers and the full command
 sequence live in `references/pregen-and-distant-horizons.md` — read it before running
 anything; version IDs drift across MC versions and must be verified against the CF API.
+
+**Chunky is NOT bundled in every pack** — check `data/mods/` first (E10 omits it; add
+`Chunky-NeoForge-1.4.23.jar`, CF file id 6383261, before pregen). Without C2ME, pregen runs
+~4-5 chunks/sec single-threaded on the i5-9500T (≈3.8 h for a 2000-block radius / ~61k chunks);
+C2ME parallelizes to ~5x. Pregen runs *inside* the server process, so the server stays joinable
+throughout — fine on a fresh world with no players yet.
 
 To verify a Chunky task actually finished (and WHEN): Minecraft log lines carry only `[HH:MM:SS]`, so
 use `docker logs --timestamps <c> | grep -i 'chunky.*Task finished'` to get the real date. The completion
@@ -102,12 +111,38 @@ ship to players; server-side perf/pregen mods (Chunky, C2ME, DH server jar) don'
 The container re-syncs the modpack from CurseForge on start, but **manual jar drops into
 `data/mods/` DO survive the sync** — confirmed empirically (AppliedFlux/AdvancedAE with
 pre-start timestamps persisted across a restart). No `REMOVE_OLD_MODS` / `CURSEFORGE_PROJECTS`
-env is set; plain jar drops just work. RCON is on port 25575:
+env is set; plain jar drops just work. **To PERMANENTLY remove a PACK mod (not a manual add),
+deleting the jar is NOT enough** — the sync re-downloads it (`Re-installing due to missing files
+from modpack: [...]`). Instead set `CF_EXCLUDE_MODS: "<slug>"` (comma-separated for several), delete
+the jar, and RECREATE the container (env change needs `docker rm -f <c> && docker compose create <c>
+&& docker start <c>`). The slug is NOT the mod id — find it via `.../v1/mods/search?searchFilter=<name>&classId=6`
+(e.g. `betterchunkloading` jar → slug `better-chunk-loading-forge-fabric`). RCON is on port 25575:
 `docker exec minecraft-atm10aero rcon-cli "<command>"`.
 
 C2ME shows harmless `@Mixin target ... not found` WARNs for client-side classes (server
 has no client) — expected, not a bug. Detect boot-complete via RCON `list` responding,
 not via log grep.
+
+### Before adding a content mod: check what the pack already ships
+Big kitchen-sinks (Enigmatica 10, ATM10) already include most decor/tech mods — E10 ships
+FramedBlocks, the full Macaw's suite, Chipped, Handcrafted, Supplementaries, Building Gadgets
+(only MrCrayfish Furniture + Productive Bees were actually missing). Before fetching, list the
+mods dir and grep the wishlist keywords; only download what's genuinely absent. Use Python, not
+`ls | xargs` (jar names contain apostrophes). After boot, content mods you add still need a
+matching CLIENT jar — they're not server-side-only like Chunky/pregen.
+
+### Swapping the running server to a different published pack (custom NeoForge → AUTO_CURSEFORGE)
+To replace a hand-curated `TYPE=NEOFORGE` server with a published CurseForge pack (e.g. a custom
+friends pack → Enigmatica 10), the compose recipe:
+- **Archive, don't delete**: stop the old container and leave its data dir in place (recoverable).
+  Point a NEW service at a fresh data dir — do NOT reuse the old one (mod-set mismatch = broken world).
+- New service env: `TYPE=AUTO_CURSEFORGE`, `CF_SLUG=<slug>` (e.g. `enigmatica10`), and mount the key:
+  `- ./secrets/cf_api_key.txt:/run/secrets/cf_api_key:ro` + `CF_API_KEY_FILE=/run/secrets/cf_api_key`.
+  Keep the SAME port, `WHITELIST`, `MEMORY`, `VIEW_DISTANCE`. Drop a leftover UDP mapping for Sable/voice
+  if the new pack has no such mod.
+- Recreate without `up -d`: `docker compose create <svc> && docker start <svc>` (both return instantly).
+  The old container becomes an orphan (harmless warning) — leave it stopped as the recoverable archive.
+- The pack downloads on first start (~2 min for a 312-mod pack on this box).
 
 ### Removing a manually-added mod = delete the jar + its leftover config
 
@@ -144,6 +179,15 @@ path is to **curate a subset of an existing pack's mods already on disk** rather
 
 - **Radium (Lithium port) is incompatible with Create** — NeoForge's ModSorter rejects it
   ("create is incompatible with radium"). Drop Radium; Noisium/Saturn/ServerCore cover perf.
+- **C2ME conflicts with betterchunkloading** (E10 and other packs ship it) — FML warns the combo
+  "causes the world to save infinitely" and betterchunkloading's DistanceManager mixin fails to apply.
+  When adding C2ME for pregen speed, remove betterchunkloading. On an AUTO_CURSEFORGE container the
+  sync re-downloads deleted pack mods, so exclude it permanently with
+  `CF_EXCLUDE_MODS: "better-chunk-loading-forge-fabric"` (verify the CF slug via the search API first).
+  Result: C2ME took E10 pregen from 4.6 → ~47 chunks/sec (3h50m → 17min for 63k chunks on the i5-9500T).
+- **Removing a pack mod on AUTO_CURSEFORGE needs `CF_EXCLUDE_MODS`**, not just deleting the jar —
+  the next sync logs `Re-installing due to missing files from modpack: [...]` and re-adds it. The
+  `betterchunkloading (version X -> MISSING)` boot line confirms the exclusion actually held.
 - **Plasmo Voice's default `port=0` collides with Sable** (Create: Aeronautics' physics
   engine) — both grab UDP on the MC port, voice fails "Failed to start the udp server". Give
   Plasmo Voice a dedicated UDP port (e.g. 25567) + publish it; keep 25566/udp for Sable.
@@ -174,6 +218,7 @@ docker-exec CF API quoting pitfall are in the reference.
 
 ## CurseForge API (for finding/downloading exact files)
 
+- **No CF key? Read a pack's mod list + versions from its GitHub repo.** E.g. `AllTheMods/ATM-10` → `changelogs/CHANGELOG-ATM10-X-Y.md` files list per-version mod bumps (`Sodium (0.8.13-beta.2) -> (0.8.13+mc1.21.1)`), `config/iris.properties` confirms the shader mod a pack ships, and `MOD_ISSUES.md` is the full mod list. Use this to answer "what does pack X use for shaders/perf" without any key — and check the REAL pack, not a fork: ATM10 (real) ships Iris + Sodium 0.8.13, while ATM10-aeronautics (fork) ships no shader loader at all (only a leftover empty iris.properties).
 - **No-key version check — cfwidget.** "Is my pack on the latest version?" does NOT need the API
   key. `curl https://api.cfwidget.com/minecraft/modpacks/<slug>` returns full project JSON with a
   `files[]` array (newest first): `files[0].display` = latest release string, plus `uploaded_at`
@@ -187,8 +232,18 @@ docker-exec CF API quoting pitfall are in the reference.
   a mod — slug search is fuzzy and otherwise returns a wall of unrelated modpacks (e.g.
   `searchFilter=ars-sable` matched ~50 packs). If the exact slug still doesn't surface, retry
   space-separated (`ars sable`) or check Modrinth.
-- Files by project: `.../v1/mods/<id>/files?gameVersion=1.21.1`; download URL via
-  `.../v1/mods/<id>/files/<fileId>` → `downloadUrl` (edge.forgecdn.net).
+- Files by project: `.../v1/mods/<id>/files?gameVersion=1.21.1&modLoaderType=6` (6 = NeoForge;
+  omit for Forge). Download URL via `.../v1/mods/<id>/files/<fileId>` → `downloadUrl`
+  (edge.forgecdn.net) — curl-able directly from the host, no key header needed.
+- **Check dependencies before dropping the jar.** `.../v1/mods/<id>/files/<fileId>` →
+  `dependencies[]` with `modId` + `relationType` (1=EmbeddedLib, 2=OptionalDependency,
+  3=RequiredDependency, 4=Tool, 5=Incompatible, 6=Include). A content mod often has a required
+  library you must ALSO fetch or the next boot crashes (e.g. MrCrayfish Furniture: Refurbished →
+  `Framework` required + `Catalogue` optional; Productive Bees → no deps).
+- **docker-exec quoting: single-quote the `sh -c` argument.** Working form:
+  `docker exec <c> sh -c 'curl -s -H "x-api-key: $(cat /run/secrets/cf_api_key)" "URL"'` — the
+  `$(...)` is expanded by the container's sh. The double-quote + `\$(...)` variant silently returns
+  empty → `JSONDecodeError`. Parse JSON on the HOST (`| python3 -c ...`); the itzg image has no python3.
 - **Changelog:** `.../v1/mods/<id>/files/<fileId>/changelog` → `{"data":"<html>"}` (strip `<br>`/tags,
   html.unescape). The file-detail endpoint does NOT include the changelog. Use it to diff pack
   versions (e.g. 0.5.1 → 0.6.1). (The pack's GitHub `CHANGELOG.md` is usually a stub.)
@@ -235,6 +290,10 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
   incompatible with 'radium'` and refuses to load. On a Create pack, drop Radium entirely;
   Noisium + Saturn + ServerCore + ModernFix carry the tick-loop wins. Don't blind-add
   "Lithium/Radium" to a Create pack.
+- **C2ME conflicts with `betterchunkloading`** — adding C2ME to a pack that ships someaddon's
+  betterchunkloading produces an FML `discouragedmod` warning (`[betterchunkloading; c2me] ... causes the
+  world to save infinitely`) plus a mixin `InvalidInjectionException` on `DistanceManager`. Remove
+  betterchunkloading via `CF_EXCLUDE_MODS` (see mod-management section) — C2ME supersedes it.
 - **Plasmo Voice collides with Create Aeronautics (Sable) on UDP.** Sable (Create
   Aeronautics' physics lib) grabs UDP on the MC port; Plasmo Voice's default `port=0`
   ("same as MC port") then fails with `[PlasmoVoice/] Failed to start the udp server`.
@@ -253,6 +312,11 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
   Powah/AE2/ExtendedAE→guideme; IronJetpacks→cucumber (cucumber is NOT MA-only);
   attributefix→prickle; Occultism→modonomicon; Tectonic→lithostitched.
 
+- **Prism Launcher ignores the manifest's NeoForge version pin on import and installs the LATEST 21.1.x for the MC version.** Symptom: `Incompatible client! Please use NeoForge 21.1.250` even though the pack manifest pins `neoforge-21.1.250` — Prism grabbed a newer 21.1.x. Fix: set the server's `NEOFORGE_VERSION` to the latest 21.1.x (bumping within the 21.1 line is backwards-compatible). Find latest via `curl -s https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml | grep -oE '21\.1\.[0-9]+' | sort -V | tail -1`.
+- **`Channel <mod>:… missing on the server side, but required on the client` + an `Incompatible client! Please use NeoForge <ver>` disconnect usually means the client hit the WRONG server, not a mod mismatch.** If the named mod exists in the intended server (e.g. `glitchcore:sync_config` when the server HAS GlitchCore), the client connected to a different box — typically the old server on 25565 while the new one is on 25566. A bare hostname defaults to port 25565; a new server needs the explicit `:port` (or an SRV record, which DuckDNS can't serve). Cross-check the reported NeoForge version against the intended server before chasing mod versions.
+- **`ConnectTimeoutException: connection timed out` on a NEW port while the OLD port works = router port-forward gap, not a server problem.** Confirm the host listens (`ss -tlnp | grep :<port>` → LISTEN on 0.0.0.0:<port>) and the container maps it. If both are fine but external connect times out, the box is behind NAT (private IP 192.168.x.x, gateway .254) and only the old port is forwarded — fix on the router (forward <port> TCP+UDP to the box's internal IP). Not fixable from the server.
+- **Iris ↔ Sodium version mismatch on NeoForge 1.21.1 crashes the client.** Stable Iris 1.8.12 is built against Sodium **0.6.13**; Sable's bundled Veil requires Sodium **0.8.12+**. The two Sodium lines (0.6.x vs 0.8.x) are mutually exclusive, so stable Iris + Sable cannot coexist. Symptom: `MixinTransformerError` → `ClassNotFoundException: net.caffeinemc.mods.sodium.client.gui.SodiumGameOptions$PerformanceSettings` from `mixins.iris.compat.sodium.json:MixinRenderSectionManager`. Fix: drop Iris (shaders off) and keep Sodium 0.8.x for Sable, or try Iris 1.8.14-beta.1 (beta, targets the 0.8.x line). Check the pairing via Modrinth API: `api.modrinth.com/v2/project/iris/version?...loaders=["neoforge"]` → read each version's `dependencies[].version_id`, resolve via `/v2/version/<id>`.
+- **Bundling server-only mods (Chunky/Saturn/Noisium) into a client pack crashes Distant Horizons on singleplayer world creation.** DH 3.3.x reflects into Chunky's `ChunkyProvider.get()` to bind a generation-progress event; if Chunky's jar is on the client classpath but its runtime provider isn't initialized, world creation throws `IllegalStateException: Chunky is not loaded` during chunk promotion to FULL. Fix: keep pregen/perf mods (Chunky, Saturn, Noisium) server-only — exclude them from the client bundle (in `build_importable.py`, a `SERVER_ONLY` filename-substring list filters `server_mods` into `bundled_server`).
 - **Mod jar filenames contain apostrophes (e.g. `L_Ender's Cataclysm 1.21.1-3.33.jar`).** `ls mods/*.jar | xargs`
   dies with "unmatched single quote". List/sort/count mod jars with Python instead:
   `python3 -c "import os; print('\n'.join(sorted(f for f in os.listdir('mods') if f.endswith('.jar'))))"`.
@@ -276,7 +340,10 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
   (empty) + mod-count, not by grepping the log.
 - **Trusting a modpack's bundled perf mods** — verify they actually load (servercore/ferrite present ≠ tuned).
 - **"Network protocol error" / connection reset on join = Distant Horizons version mismatch.** When a client's DH jar doesn't match the server's, the server log shows `Failed to process a synchronized task of the payload: distant_horizons:msg` → `IncompatibleMessageInternalEvent` → `Connection reset by peer` (older server rejecting a newer client). The reverse (newer server, older client) looks different: clean `Player [x] joined` DH handshake, ~30–60s of play, then clean `lost connection: Disconnected` with NO server-side error — the CLIENT crashes. Fix is always the same: align both sides to one DH version. As of Sept 2026 the `3.3.x` line (3.3.3) is the stable release line; `3.2.0-b` and earlier are old betas. Note 3.3.3 bumps DH config version 4→5 and resets client config. DH is client-optional, so only the `.mrpack` (server mirror) bundles it — never the CF `.zip`, which carries only client-required extras.
-- **A mod that needs a NEW port mapping (voice chat, web UI) requires container RECREATE, not restart.** Port bindings are set at container-create time; `docker restart` won't pick up a compose port change. Use `docker rm -f <name> && docker compose create <name> && docker start <name>` (all return instantly — `docker compose up -d` trips the long-lived-process guard). For Plasmo Voice specifically: MC uses TCP 25565, but voice needs a SEPARATE `25565:25565/udp` mapping — TCP forwarding does NOT carry UDP. Plasmo Voice default `port=0` rides the MC port over UDP; config lives at `config/plasmovoice/server/config.toml`; `client_mod_required=false` lets players without the mod still join. Removal = delete the jar + generated `config/plasmovoice/` dir + revert the port line + recreate; the leftover `plasmovoice (version X -> MISSING)` log line afterward is a benign NeoForge version-diff warning that clears on its own.
+- **"Incompatible client! Please use NeoForge <ver>" = client loader version ≠ server, and it cascades into fake mod-channel errors.** Prism (and other launchers) often IGNORE the pinned loader version in a CF/mrpack manifest and install the LATEST NeoForge, so even a correctly-pinned self-contained pack fails if the server sits on an older 21.1.x. The same drift also trips confusing channel errors that look like a mod-version bug — e.g. `Channel [glitchcore:sync_config] ... missing on the server side, but required on the client!` (BOP/GlitchCore) — but those clear once the loader versions match. Fix: sync versions. Either pin the client to the server's exact version in the launcher, or bump the server `NEOFORGE_VERSION` to the latest 21.1.x (find it: `curl -s https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml | grep -oE '21\.1\.[0-9]+' | sort -V | tail -1`). NeoForge 21.1.x patch bumps (250→259) are backwards-compatible — mods reload clean. After bumping: recreate the container (`docker rm -f <c> && docker compose create <c> && docker start <c>`), re-pin BOTH manifests (CF `modLoaders[].id` = `neoforge-<v>`; mrpack `dependencies.neoforge` = `<v>`), rebuild + re-upload the packs. The boot-log line `neoforge (version A -> B)` is the benign version-tracker delta, not a crash.\n- **A mod that needs a NEW port mapping (voice chat, web UI) requires container RECREATE, not restart.** Port bindings are set at container-create time; `docker restart` won't pick up a compose port change. Use `docker rm -f <name> && docker compose create <name> && docker start <name>` (all return instantly — `docker compose up -d` trips the long-lived-process guard). For Plasmo Voice specifically: MC uses TCP 25565, but voice needs a SEPARATE `25565:25565/udp` mapping — TCP forwarding does NOT carry UDP. Plasmo Voice default `port=0` rides the MC port over UDP; config lives at `config/plasmovoice/server/config.toml`; `client_mod_required=false` lets players without the mod still join. Removal = delete the jar + generated `config/plasmovoice/` dir + revert the port line + recreate; the leftover `plasmovoice (version X -> MISSING)` log line afterward is a benign NeoForge version-diff warning that clears on its own.
+
+- **"glitchcore:sync_config missing on server" + "Please use NeoForge 21.1.250" = player connected to ATM10aero (25565), NOT the Oathless pack (25566).** Bare `server.oathless.dev` has no SRV record, so it falls through to port 25565 = `minecraft-atm10aero` — which has NO GlitchCore (verified: zero GlitchCore jars) and runs NeoForge 21.1.250. The Oathless pack (BOP→GlitchCore, NeoForge latest) only lives on `:25566`. Until the SRV record is added, players MUST use `server.oathless.dev:25566`. The GlitchCore channel error is the fingerprint of wrong-server — check which port the player is hitting before chasing mod/loader versions.
+- **NeoForge loader version mismatch on join (`Incompatible client! Please use NeoForge X`).** Prism Launcher installs the *latest* NeoForge for the MC version and ignores the manifest's pinned `neoforge-X` version, so a client on "latest" is rejected by an older pinned server. Fix: keep the server on the latest 21.1.x — read the current latest from `https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml`, set `NEOFORGE_VERSION`, recreate (`docker rm -f <c> && docker compose create <c> && docker start <c>`), confirm `NeoForge mod loading, version X` in the boot log, then rebuild the pack manifests with the matching `neoforge-X` pin and re-upload.
 
 ## Additional operations (absorbed from docker-homeserver)
 
@@ -321,9 +388,46 @@ Full recipe + dependency table: `references/custom-modpack-build.md`.
 > ⚠️ Ruben wants wishlist-driven lean packs — build exactly what he lists. "Other mods
 > you might suggest" = propose a veto-list BEFORE adding, don't silently pad the pack.
 
+## Building a NEW custom modpack (curated subset)
+
+When the user wants a fresh custom pack (a NEW itzg server, not more mods on an existing one),
+the lazy-correct path is to **curate a subset of an already-running pack** on the box
+(ATM10aero): copy the wishlist mods + their libraries from its `data/mods/` (already
+version-matched), fetch only the genuinely-new mods from Modrinth, then boot-iterate missing
+deps (NeoForge's ModSorter names every missing dep + incompatibility in one pass). Full
+workflow, the verified dependency matrix, Sodium-vs-Embeddium client stack, and importable-pack
+build recipe live in `references/custom-modpack-from-scratch.md`.
+
+Hard rules for Ruben:
+- **Only add what he explicitly asked for.** Present "suggested extras" for a yes/no BEFORE
+  adding — he pushed back hard ("you added a lot of mods without my input") when a pack was
+  padded with Apotheosis/Occultism/etc. without asking. Never silently add content mods.
+- **Never modify/rebuild the existing server** (ATM10aero) while building a new pack. Copy
+  one-way FROM it only, and say so explicitly. He is protective of it and will flag any
+  command that even references the old server's path.
+
+New container env: `TYPE=NEOFORGE` + `VERSION=1.21.1` + `NEOFORGE_VERSION=<exact>` (read the
+source server's `.neoforge-manifest.json` `forgeVersion` — do NOT trust memory).
+
+## Client connection error triage (server healthy, client fails)
+
+Four client-side signatures → four root causes. Full playbook + the wrong-server and
+router-forwarding real cases: `references/connection-and-loader-mismatch-debugging.md`.
+
+1. **"mod X channel missing on server" + "Incompatible client! Please use NeoForge <ver>"** — the player connected to a DIFFERENT server (wrong host/port). A channel can only be "missing on the server" if the server they actually reached lacks that mod; the quoted NeoForge version is *that* server's version, not yours.
+2. **ConnectTimeoutException on a new port (old port still works)** — router port-forwarding gap, NOT a server issue. Confirm host LISTENs on 0.0.0.0:<port> + box has a private IP, then hand the user the router rule set.
+3. **Prism ignores the manifest's NeoForge pin and installs LATEST** — keep the server on the latest NeoForge for the MC version (bump `NEOFORGE_VERSION`; same-line 21.1.x bumps are mod-compatible) so it matches what Prism installs. Don't hand-pin clients — it re-breaks on the next bump.
+4. **Singleplayer world-creation crash** — the launch log only points at `crash-reports/<ts>-server.txt`; the exception lives in that file, not the log. Ask for it. "high memory pressure" + big `-Xmx` = OOM-during-worldgen suspect.
+
 ## Reference files
 
-- `references/custom-modpack-build.md` — build a curated from-scratch modpack: subset-copy + fetch workflow, boot-iterate deps, dependency gotcha table, UDP port conflict, self-contained CF/mrpack export, shaders/DH source map.
+- `references/custom-modpack-from-scratch.md` — build a new custom pack by curating an existing
+  server: workflow, 1.21.1 NeoForge dependency matrix (Tectonic→Lithostitched, BOP→TerraBlender
+  +GlitchCore, AdAstra→common-storage-lib, XNet→RFToolsBase, AE2/Powah/ExtendedAE→guideme,
+  AttributeFix→Prickle, FastFurnace/FastWorkbench→Placebo, Rechiseled→Fusion client-only),
+  compatibility traps (Radium×Create, Plasmo Voice×Sable UDP conflict), Iris-requires-Sodium
+  (not Embeddium) client stack, and self-contained CF-zip/.mrpack import recipes.
+- `references/pregen-and-distant-horizons.md`
 - `references/pregen-and-distant-horizons.md`
 - `references/pregen-and-distant-horizons.md` — exact CF file IDs/versions for Chunky/C2ME/DH on 1.21.1 NeoForge, full Chunky + DH LOD command sequence, radius/time guidance, client shader caveats.
 - `references/performance-mod-gaps.md` — which perf mods are already in the pack vs. genuinely missing (server-side: Lithium/ServerCore/Noisium; client-side rendering mods are deliberately absent). Verify availability via Modrinth API.
