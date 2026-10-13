@@ -361,6 +361,12 @@ Two layers: RCON (`whitelist on`/`whitelist add`) is instant; `WHITELIST` + `ENF
 ### RCON console + TPS
 `docker exec <c> rcon-cli "<cmd>"` gives a full console with no panel. TPS via RCON: `debug start` → sleep → `debug stop` (`spark tps` returns empty via RCON — chat-only output).
 
+### Player playtime / "who played and how long"
+
+Player stats are **NOT** in `world/playerdata/<uuid>.dat` — its `stats` compound is empty on modern 1.21.1. They live in `world/stats/<uuid>.json` (plain JSON). Map UUID→username via `usercache.json` at the data root. The playtime stat is `stats.minecraft:custom.minecraft:play_time` in **ticks** (20 ticks = 1s; 72,000 = 1h). `total_world_time` mirrors it; `minecraft:deaths` is the death count. Run `scripts/player-playtime.py [DATA_DIR]` for a sorted report.
+
+Session history (who joined/left, and when) lives in the logs: `logs/latest.log` holds only the **current** day; prior days are gzip-rotated to `logs/YYYY-MM-DD-*.log.gz`. Grep `"joined the game"` / `"left the game"` across both (zcat the gz). PITFALL: `lost connection: Disconnected/Timed out` at the login stage (thread `ServerLoginPacketListenerImpl`) is an auth/whitelist failure, NOT a play session — randoms probing the port and non-whitelisted friends never actually entered the game and must NOT be counted as "played". Only `joined the game` lines count.
+
 ### World backups
 Worlds have no built-in backup. Nightly tar.gz via `templates/backup-minecraft.sh` (7-day retention, `cronjob ... no_agent=true schedule="0 4 * * *"`). Backups go to `~/homeserver/backups/minecraft/`, outside the Docker volume.
 
