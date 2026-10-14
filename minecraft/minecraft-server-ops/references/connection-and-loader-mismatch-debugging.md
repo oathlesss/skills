@@ -57,6 +57,41 @@ get the Description + stack trace). Also: a log showing "system under high memor
 pressure" / "Memory pressure level: Yellow" with a large `-Xmx` is an OOM-during-worldgen
 suspect — world creation is the peak-RAM moment for a ~170-mod pack.
 
+## Signature 4 — "The server sent registries with unknown keys: ResourceKey[minecraft:block / modid:item]"
+
+Example seen: `Client disconnected with reason: The server sent registries with unknown
+keys: ResourceKey[minecraft:block / mysticalagriculture:amber_crop], ResourceKey[minecraft:item
+/ mysticalagriculture:amber_seeds], ResourceKey[minecraft:item / mysticalagriculture:amber_essence]`.
+
+Root cause: **the SERVER has a registry entry the client lacks** — the mirror image of
+Signature 1 (client-has-mod-server-doesn't). This is the registry-sync phase, NOT a channel/
+loader mismatch. The error names the exact missing keys. Two common triggers on an FTBA /
+NeoForge pack:
+
+1. A **manually-added content mod** on the server that registers blocks/items, but the
+   client never installed the matching jar.
+2. A **manually-added Mystical Customization crop config** — `config/mysticalcustomization/crops/*.json`
+   registers `<modid>:<name>_crop` (block) + `<modid>:<name>_seeds` + `<modid>:<name>_essence`
+   (items) on BOTH sides, and these configs are **NOT synced server→client**. A crop config
+   present on the server but missing from the client's pack produces exactly this error,
+   listing only the crop's three keys (a strong fingerprint: keys all share one `<name>`).
+
+Diagnose:
+- `ls data/config/mysticalcustomization/crops/` — every `*.json` here is a custom crop that
+  must exist client-side too.
+- Diff against the pack manifest to find a manual add (file on disk but not in `files[]`,
+  and/or mtime newer than the pack install time):
+  `python3 -c "import json; d=json.load(open('.manifest.json')); print([f for f in d['files'] if 'mysticalcustomization' in f.get('path','').lower()])"`
+
+Fix: add the missing file(s) to every client pack at the SAME relative `config/` path, or
+remove the manual config server-side and restart. If the keys come from a manual mod jar,
+ship the matching jar to clients.
+
+Real case (Oct 2026, FTB Evolution 2): `amber.json` — a custom Amber MA crop added alongside
+the manually-re-added Thaumaturge mod (ingredient `thaumaturge:amber`), timestamped after the
+pack install, NOT in the 1.2.2 manifest's 17 crop files. Client already had Thaumaturge (the
+error listed ONLY the three amber keys), so the fix was one config file, not a mod.
+
 ## Prism Launcher ignores the NeoForge version pin
 
 When a player imports a CF zip / `.mrpack`, Prism installs the **LATEST** NeoForge for
