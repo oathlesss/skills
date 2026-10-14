@@ -56,7 +56,12 @@ anything; version IDs drift across MC versions and must be verified against the 
 **Chunky is NOT bundled in every pack** — check `data/mods/` first (E10 omits it; add
 `Chunky-NeoForge-1.4.23.jar`, CF file id 6383261, before pregen). Without C2ME, pregen runs
 ~4-5 chunks/sec single-threaded on the i5-9500T (≈3.8 h for a 2000-block radius / ~61k chunks);
-C2ME parallelizes to ~5x. Pregen runs *inside* the server process, so the server stays joinable
+C2ME parallelizes to ~5x. **FTB Evolution 2 (MC 26.1.2) already bundles Chunky 1.5.4** and pregens at
+~12–18 chunks/sec on the i5-9500T *without* C2ME (~1.5 h for a 2000-block overworld radius) — worldgen
+cost varies widely by pack, so measure the actual `chunky progress` rate instead of assuming the 4.6 cps
+baseline — and IGNORE the first `chunky progress` reading (a few seconds after `start` shows ~2–3 cps with a scary multi-hour ETA from JIT warmup; re-check after ~60s for the real ~15 cps). Chunky 1.5.x has NO `chunky version` command (it errors "Incorrect argument") — use
+`chunky help` to confirm; `center`/`radius`/`world`/`start`/`progress`/`continue` are unchanged from 1.4.x.
+Kick any online players first (`rcon-cli "kick <name> Pregen starting"`) — pregen + a live player tanks TPS for both. Pregen runs *inside* the server process, so the server stays joinable
 throughout — fine on a fresh world with no players yet.
 
 To verify a Chunky task actually finished (and WHEN): Minecraft log lines carry only `[HH:MM:SS]`, so
@@ -131,6 +136,20 @@ mods dir and grep the wishlist keywords; only download what's genuinely absent. 
 `ls | xargs` (jar names contain apostrophes). After boot, content mods you add still need a
 matching CLIENT jar — they're not server-side-only like Chunky/pregen.
 
+### Researching "can I add mod X to this pack?" (pre-flight, no install)
+
+To answer "is this mod compatible with my running server" without touching the server, use the CF API against the host-decrypted key file (below) and diff against the pack's real `data/mods/`:
+
+1. **Slug → project id**: `.../v1/mods/search?gameId=432&searchFilter=<name>&classId=6` (classId=6 = mod). A fuzzy name returns a wall of same-theme addons (searching "thaumaturge" surfaced ~11 Thaumcraft-adjacent addons); match the `slug` exactly to the CF URL the user pasted.
+2. **Files → versions**: `.../v1/mods/<id>/files?pageSize=50` → each file's `gameVersions[]` = [MC version, NeoForge/Forge, Client, Server]. Match against the server's exact MC + loader (FTB: `targets[]` from the FTB API; CF pack: `.neoforge-manifest.json`).
+3. **Latest file → deps**: `.../v1/mods/<id>/files/<fileId>` → `dependencies[]` (`relationType` 3=Required, 2=Optional). Resolve required `modId`s via `.../v1/mods/<modId>`.
+4. **Diff against the pack**: grep `data/mods/` for each required dep's jar. If every required dep is already present AND version-matched, it's a drop-in with zero new dependencies (e.g. Thaumaturge → Curios + Lithostitched + optional JEI, all already shipped by FTB Evolution 2).
+
+- **CF API key when no AUTO_CURSEFORGE container runs** (FTBA / TYPE=NEOFORGE servers don't mount `/run/secrets/cf_api_key`): source it from the host decrypted file without exposing the value — `-H "x-api-key: $(cat /home/ruben/homeserver/secrets/cf_api_key.txt)"`. Same use-without-reading pattern as the docker-exec form; the value never appears in output.
+- **cfwidget is MODPACK-ONLY.** `api.cfwidget.com/.../<modslug>` returns empty JSON for a mod (both `/minecraft/mc-mods/<slug>` and `/<slug>`). For mods use the CF API.
+- **Adding to an EXISTING world** — check the latest file's changelog (`.../files/<fileId>/changelog`) for a retroactive-worldgen fix line ("chunks generated before X was added"). A mod that ships that is explicitly safe on an already-generated world (Thaumaturge 1.0.2: "Fixed missing aura in chunks generated before Thaumaturge was added").
+- **FTBA manual-drop persistence is UNVERIFIED** — the "manual jar drops survive the sync" finding above was confirmed on AUTO_CURSEFORGE only. The FTB App installer re-runs on boot; it has NOT been confirmed on this box that hand-dropped jars in `data/mods/` survive. Verify with a drop→restart→`ls` round-trip before relying on it.
+
 ### Swapping the running server to a different published pack (custom NeoForge → AUTO_CURSEFORGE)
 To replace a hand-curated `TYPE=NEOFORGE` server with a published CurseForge pack (e.g. a custom
 friends pack → Enigmatica 10), the compose recipe:
@@ -143,6 +162,28 @@ friends pack → Enigmatica 10), the compose recipe:
 - Recreate without `up -d`: `docker compose create <svc> && docker start <svc>` (both return instantly).
   The old container becomes an orphan (harmless warning) — leave it stopped as the recoverable archive.
 - The pack downloads on first start (~2 min for a 312-mod pack on this box).
+
+### Swapping to an FTB App pack (TYPE=FTBA)
+
+FTB packs (FTB Evolution 2, etc.) are distributed via the FTB App. Deploy with `TYPE=FTBA` (cfwidget returns empty for them even though the pack JSON carries a `meta.curseforgeProjectId` — don't infer "not on CurseForge" from an empty cfwidget response):
+
+- `image: itzg/minecraft-server:java25` for MC 26.x packs (Java 25). Check exact versions first:
+  `curl https://api.feed-the-beast.com/v1/modpacks/public/modpack/<id>` → `targets[]` gives minecraft/neoforge/java versions (e.g. FTB Evo 2 = MC 26.1.2, NeoForge 26.1.2.109, Java 25.0.2).
+- `FTB_MODPACK_ID`: numerical ID from the URL `feed-the-beast.com/modpacks/<ID>-<slug>` (FTB Evolution 2 = 135). Omit `FTB_MODPACK_VERSION_ID` to auto-resolve latest.
+- No CF key needed. FTBA uses the NEW `api.feed-the-beast.com/v1/modpacks` API (the old api.modpacks.ch no longer lists new packs — "Modpack id not valid").
+- **Version history / per-version mod lists / changelogs** (no CF key): the pack endpoint's `versions[]` is metadata-only (id/name/type/released). The full mod list lives at `.../public/modpack/<id>/<versionId>` (`files[]`, mods = `path == "./mods"`); auto-generated add/remove/update diffs live at `.../modpack/<id>/<versionId>/changelog` (SINGULAR `modpack`, NO `public` — the `public/.../version/...` and `public/modpack/<id>/<id>/changelog` forms 404). Use these to answer "was mod X ever in this pack" / diff pack versions. Field structure + worked example: `references/ftb-evolution-2.md`.
+
+**PITFALL — the `dsp` (Default Server Properties) mod clobbers server.properties on first boot.** FTB Evolution 2 ships `default-server-properties-neoforge-*.jar` (modid `dsp`), which on FIRST boot injects `/data/default-server.properties` over `server.properties` (log: "Replacing server properties with default properties!") and drops `/data/local/default-used.marker`. Effect: env-based `ENFORCE_WHITELIST`/`VIEW_DISTANCE` are overridden by the pack's defaults on first boot — whitelist silently OFF, view-distance 10. It is ONE-SHOT (marker-gated): subsequent boots let itzg env re-apply. Fix whitelist deterministically: append `enforce-whitelist=true` + `white-list=true` to the bind-mounted `/data/default-server.properties`, `docker restart`, verify via `docker exec <c> rcon-cli whitelist list`. RCON re-enables on the 2nd boot (itzg default `ENABLE_RCON`). Note the pack also ships its own view/sim-distance=10 defaults — decide whether to override via env or keep the pack's tuning.
+
+**Mod management on FTBA (verified Oct 2026):** `start-deployFTBA` re-runs the FTB installer ONLY when `FTB_FORCE_REINSTALL=true`, or `.manifest.json` / `.ftb-installed` is missing, or the marker ≠ `${FTB_MODPACK_ID}=${FTB_MODPACK_VERSION_ID}` (same-version boots log "…is ready to go" and skip the installer). With `VERSION=LATEST` + no `FTB_MODPACK_VERSION_ID`, the version id is re-resolved each boot, so a NEW pack release triggers a full re-install — which re-downloads any deleted pack files (e.g. the `thaumaturge-absent` shim) but does NOT delete manually-added jars. Manual jar drops into `data/mods/` and deletions of pack files (datapacks, configs) persist across normal restarts.
+
+**FTB API (keyless) — inspect/diff pack versions:** pack info `GET …/v1/modpacks/public/modpack/<id>` (has `versions[]` with `id`/`name`/`type`); full version manifest `GET …/v1/modpacks/public/modpack/<id>/<versionId>` → `files[]` (each `{path, name, url, sha1, size}`). Changelog `GET …/v1/modpacks/modpack/<id>/<versionId>/changelog` → auto-generated Removed/Added/Updated mod lists (the "why removed" rationale is NOT there — auto-gen only). Diff two version manifests' `files[]` to find exactly what a pack update removed/added (mods, quests, datapacks, textures). Note: FTB packs ARE mirrored on CurseForge (`meta.curseforgeProjectId`) even though cfwidget returns empty. **Re-adding a mod a pack once shipped:** grab the jar's `url`+`sha1` from the OLD version manifest — it's a keyless forgecdn/FTB-CDN URL, byte-exact to what FTB tested.
+
+**FTB Quests storage (26.x):** quest definitions = `config/ftbquests/quests/` (`chapters/*.json5`, `lang/en_us/chapters/*.json5`); `world/ftbquests/` = per-team progress only (UUID-named files with `task_progress`). To re-add a removed chapter, restore its config files + any `kubejs/assets/ftb/textures/quests/` images, then restart (progress untouched; chapter appears at 0%).
+
+Pack-specific ops notes (Chunky bundled, Waystones/Kindred Spirits config + item IDs, resource-farming mod list, absent tech mods): `references/ftb-evolution-2.md`.
+
+**Monitors go stale on a swap.** Homepage's `homepage/services.yaml` has a `container:` field pointing at the old container name (update it); Uptime Kuma stores monitors in `uptime-kuma/kuma.db` `monitor` table — query it read-only (`python3` sqlite3 with `file:kuma.db?mode=ro`, columns `name,type,url,hostname,port`) and fix via the Kuma UI (don't write the live DB — it has a WAL). On the E10→Evo2 swap BOTH were already stale (pointing at `minecraft-atm10sky` / `minecraft-atm10aero`, servers retired long before).
 
 ### Removing a manually-added mod = delete the jar + its leftover config
 
@@ -228,6 +269,10 @@ docker-exec CF API quoting pitfall are in the reference.
 - Needs an API key — already mounted in the container at `/run/secrets/cf_api_key`
   (from `CF_API_KEY_FILE`). Query it WITHOUT reading the secret yourself:
   `docker exec minecraft-atm10aero sh -c 'curl -s -H "x-api-key: $(cat /run/secrets/cf_api_key)" "https://api.curseforge.com/v1/mods/search?gameId=432&searchFilter=<slug>&classId=<id>"'`
+  When NO AUTO_CURSEFORGE container is running (e.g. after swapping to an FTBA pack, or a retired
+  E10/ATM10 box), the decrypted key also lives on the host at `~/homeserver/secrets/cf_api_key.txt`
+  — query the CF API directly WITHOUT printing the value:
+  `curl -s -H "x-api-key: $(cat ~/homeserver/secrets/cf_api_key.txt)" "https://api.curseforge.com/v1/mods/<id>/files"`.
 - `classId`: 6 = mod, 12 = resource pack, 4471 = modpack. ALWAYS pass `classId=6` when searching
   a mod — slug search is fuzzy and otherwise returns a wall of unrelated modpacks (e.g.
   `searchFilter=ars-sable` matched ~50 packs). If the exact slug still doesn't surface, retry
@@ -361,6 +406,49 @@ Two layers: RCON (`whitelist on`/`whitelist add`) is instant; `WHITELIST` + `ENF
 ### RCON console + TPS
 `docker exec <c> rcon-cli "<cmd>"` gives a full console with no panel. TPS via RCON: `debug start` → sleep → `debug stop` (`spark tps` returns empty via RCON — chat-only output).
 
+### Giving items / finding a mod item's registry ID
+
+When the user says "give me X" (`/give <player> <item> <count>`), you need the exact `namespace:path` ID — RCON has no tab-complete, so don't guess. Find it by searching the pack's jars for the item name:
+
+```bash
+cd <data>/mods
+python3 -c "
+import zipfile, os
+for f in os.listdir('.'):
+    if not f.endswith('.jar'): continue
+    try:
+        z=zipfile.ZipFile(f)
+        for n in z.namelist():
+            if 'golden_bone' in n.lower():   # the snake_case item name
+                print(f, '->', n)
+    except: pass
+"
+```
+
+The registry ID is derived from the hit path: `assets/<modid>/items/<name>.json` → `<modid>:<name>`. Confirm the display name via `assets/<modid>/lang/en_us.json`. Then `docker exec <c> rcon-cli "give <player> <modid>:<name> <count>"` — success echoes `Gave N [Item Name] to <player>`. The target must be ONLINE (check `rcon-cli list` first). Verified example: `kindredspirits:golden_bone` (Golden Bone).
+
+### Giving items via RCON (resolve modded item IDs, don't guess)
+
+The user asks for item gives in natural-language shorthand ("give 2 golden bones", "or just 64 gold"). Resolve the exact `namespace:item_id` yourself, then give via RCON:
+
+1. **Vanilla items** are obvious: `minecraft:gold_ingot` (user's "gold" = ingots unless blocks/nuggets specified), `minecraft:sculk`, `minecraft:bone`.
+2. **Modded items** — find the ID by searching the mod jars for the item's registry file. The path `assets/<modid>/items/<name>.json` (or `data/<modid>/recipe/<name>.json`) gives ID = `<modid>:<name>` (snake_case). E.g. "golden bone" → `kindredspirits:golden_bone` (Kindred Spirits mod in FTB Evo 2). One-liner over the mods dir:
+   ```bash
+   cd <data>/mods && python3 -c "
+   import zipfile, os
+   for f in os.listdir('.'):
+       if not f.endswith('.jar'): continue
+       for n in zipfile.ZipFile(f).namelist():
+           if 'golden_bone' in n.lower(): print(f, '->', n)
+   "
+   ```
+3. **Target must be ONLINE** — vanilla `/give` rejects offline players. Confirm with `rcon-cli list` first; default to `0athless`:
+   ```bash
+   docker exec <c> rcon-cli "give 0athless kindredspirits:golden_bone 2"   # → "Gave 2 [Golden Bone] to 0athless"
+   ```
+
+The same jar+config read answers "how does mod X work / what's the limit": read `data/config/<modid>-*.toml` (commented, authoritative) and the jar's `assets/<modid>/lang/en_us.json` + class strings before web-searching — faster and exact for the installed version.
+
 ### Player playtime / "who played and how long"
 
 Player stats are **NOT** in `world/playerdata/<uuid>.dat` — its `stats` compound is empty on modern 1.21.1. They live in `world/stats/<uuid>.json` (plain JSON). Map UUID→username via `usercache.json` at the data root. The playtime stat is `stats.minecraft:custom.minecraft:play_time` in **ticks** (20 ticks = 1s; 72,000 = 1h). `total_world_time` mirrors it; `minecraft:deaths` is the death count. Run `scripts/player-playtime.py [DATA_DIR]` for a sorted report.
@@ -453,5 +541,7 @@ router-forwarding real cases: `references/connection-and-loader-mismatch-debuggi
 - `references/minecraft-atm10-sky.md` — working ATM10 deploy config (historical — server is now ATM10 Aeronautics, `CF_SLUG=all-the-mods-10-aeronautics`).
 - `references/minecraft-add-individual-mods.md`, `references/minecraft-itzg-add-mods.md`, `references/minecraft-curseforge-add-mod.md`, `references/minecraft-add-mods.md` — four near-duplicate session recipes for adding a single extra mod to a running itzg AUTO_CURSEFORGE server via the CF/Modrinth API (slug→id, `modLoaderType=6`, `/download-url` vs `/download`, re-decrypt before restart, `.curseforge-manifest.json`). Consolidate these four into one on next touch.
 - `templates/backup-minecraft.sh` — nightly Minecraft world backup script, 7-day retention.
+- `references/world-reset-and-cleanup.md` — reset/regenerate a world on a running itzg server (delete only `data/world`, restart; whitelist/mods/quests survive; `dsp` clobber is one-shot) AND delete old/retired server dirs (root-owned `data/` husks need `sudo rm -rf` to finish).
+- `scripts/chunky-watch.sh` — re-runnable background watcher that polls `chunky progress` and exits on completion (pair with terminal background=true + notify_on_complete=true).
 - `references/from-scratch-custom-pack.md` — build a NEW custom pack by curating a subset of an existing pack's mods: workflow, dependency gotchas (Radium×Create, BOP/Tectonic/AdAstra deps, Placebo dual-use), Plasmo Voice×Sable UDP conflict, Iris-vs-Oculus on 1.21.1, self-contained CF-zip/mrpack build, Forgejo large-binary distribution.
 - `references/custom-modpack-build.md` — build a from-scratch curated pack: subset-copy workflow, boot-iterate loop, keyless Modrinth download pattern, 1.21.1 dependency map, SRV routing, client-zip merge.

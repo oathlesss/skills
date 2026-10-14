@@ -18,6 +18,13 @@ Load this skill when the user:
 
 ## Research Pipeline
 
+### FTB App packs aren't on CurseForge — get the real mod list from feed-the-beast.com
+
+FTB's own packs (FTB Evolution 2, etc.) are distributed via the FTB App, NOT CurseForge — cfwidget/modpackindex return empty for them, so the usual CF mod-list paths fail. To get an authoritative mod list:
+- The `feed-the-beast.com/modpacks/<ID>-<slug>` page is a Next.js SPA; the mod list is client-fetched. Render it with agent-browser (web_extract's DuckDuckGo backend can't) and navigate to the `/mods` subpath (`.../<slug>/mods`), then dump `document.body.innerText` / `<main>` link text for the full alphabetical list + one-line descriptions.
+- The FTB API returns version metadata keylessly: `curl https://api.feed-the-beast.com/v1/modpacks/public/modpack/<ID>` → `name`, `versions[]`; per-version detail at `.../public/modpack/<ID>/<versionID>` → `targets[]` (minecraft/neoforge/java).
+- FTB Evolution 2 = pack ID 135 (MC 26.1.2, NeoForge 26.1.2.109, Java 25).
+
 ### Phase 1: Source Gathering (4+ sources required)
 
 Run parallel research via delegate_task across these source types:
@@ -27,6 +34,37 @@ Run parallel research via delegate_task across these source types:
 3. **Written guides/wikis** — Search official pack wikis (GPORTAL, allthemods.com, alltheguides), SiriusMC, Minecraft-Guides wiki.
 4. **Discord** — Check if the pack has an official Discord (e.g., discord.gg/allthemods) and note it as a source. Community Discord often has pinned tips not found elsewhere.
 5. **Official GitHub issue tracker** — most ATM packs have a `Mod Suggestions List` issue (e.g. AllTheMods/ATM-10-a #1) where the community + maintainers discuss mods to add/remove. This is the authoritative source for "which mods are worth adding to this pack" and "what's already in it", and the maintainers' own comments signal their stance (e.g. CC:Tweaked declined, focus on optimization/performance). Fetch it via the GitHub API (no key needed for public repos): `api.github.com/repos/<org>/<repo>/issues/1` + `/comments`.
+
+### Phase 1b: Getting the mod list for NEW FTB packs
+
+FTB's newer packs (FTB Evolution, FTB Evolution 2, and later) are **not** on `api.modpacks.ch` — that API only carries legacy packs (searching "evolution" there surfaced only the old FTB Evolution, id 125; Evolution 2 returned "Modpack id not valid"). The mod list is also **not server-rendered** on `feed-the-beast.com` — it's a Next.js SPA that fetches the list client-side, so `curl` and `web_extract` (DuckDuckGo search-only backend) both come back empty. Aggregators (modpackindex) may only have placeholder stubs for brand-new packs.
+
+Working recipe (verified Oct 2026):
+
+1. Read the numeric ID + slug from the URL: `feed-the-beast.com/modpacks/<id>-<slug>` (e.g. `135-ftb-evolution-2`).
+2. The full mod list lives on a sub-route, one per tab: `/modpacks/<id>-<slug>/mods` (also `/versions`, `/about`). Open it directly — clicking the in-page "Mods" tab does NOT switch content without a re-navigation.
+3. Render with agent-browser (see `browser-automation` skill) and dump the text:
+   ```
+   agent-browser open "https://feed-the-beast.com/modpacks/135-ftb-evolution-2/mods"
+   agent-browser eval "document.body.innerText"   # list = name → description → "By <authors>"
+   ```
+4. To isolate just mod names for categorization, query the DOM:
+   ```
+   agent-browser eval "Array.from(document.querySelectorAll('main a, main h2, main h3, main h4')).map(a=>a.textContent.trim())"
+   ```
+The page header also confirms MC version + loader (e.g. "Minecraft 26.1.2 / Neoforge / Latest version 1.2.2").
+
+Pack-specific findings are banked under `references/` (e.g. `references/ftb-evolution-2-resource-farming.md`) so follow-up guide requests for the same pack start from a known mod list.
+
+### FTB App packs (NOT on CurseForge) — get the mod list + version info
+
+FTB's newer packs (FTB Evolution 2, etc.) are distributed via the FTB App, NOT CurseForge (`api.cfwidget.com/minecraft/modpacks/<slug>` returns empty). For these, skip the CF/GitHub sources and hit the FTB API directly — no key needed:
+
+- **Pack ID** comes from the URL: `feed-the-beast.com/modpacks/<ID>-<slug>` (e.g. FTB Evolution 2 = 135).
+- **Pack metadata + versions:** `https://api.feed-the-beast.com/v1/modpacks/public/modpack/<id>` → `versions[]` (sort by `.updated` for latest).
+- **Exact version detail** (MC/loader/Java versions + complete file list): `https://api.feed-the-beast.com/v1/modpacks/public/modpack/<id>/<version_id>` → `targets[]` (minecraft / neoforge / java entries) and `files[]` (every file path — grep `mods/*.jar` to enumerate the actual mod list).
+- The OLD `api.modpacks.ch` no longer lists new packs (returns `"Modpack id not valid"` for IDs >~126).
+- The feed-the-beast.com website is Next.js client-rendered. The human-readable mod list lives at `/modpacks/<id>-<slug>/mods` — render it with agent-browser (`agent-browser open <url>` then `eval "document.body.innerText"`, or click the "Mods" tab) when `web_extract` can't (its DuckDuckGo backend is search-only).
 
 ### Phase 2: Synthesis into Mega-Guide
 
