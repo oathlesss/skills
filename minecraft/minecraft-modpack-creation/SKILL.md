@@ -20,10 +20,14 @@ the *selection → verification → assembly* pipeline.
 1. **Pin the target before anything else** — version + loader + platform. Ruben's default is
    **1.21.1 NeoForge** (matches ATM10aero; the whole tech-magic ecosystem has builds here).
    NOTE: Minecraft moved to a new versioning scheme in 2026 — "26.x" releases exist and most
-   mods' *latest* builds now target 26.x, but AE2 / Productive Bees / Dyson Cube / Distant
-   Horizons are NOT fully there yet. 1.21.1 NeoForge remains the safe sweet spot for
-   tech-magic packs. Confirm with the user; also confirm scope (fresh pack vs. extend an
-   existing server) — it changes everything.
+   mods' *latest* builds now target 26.x. As of Oct 2026 the 26.1.2 NeoForge ecosystem is MOSTLY
+   migrated — AE2 (26.1.13-beta), Distant Horizons (3.3.3), EnderIO, Refined Storage, Powah,
+   Xycraft, Oritech, Just Dire Things, Energized Power, Thaumaturge, Tectonic/Terralith all have
+   builds — BUT the "Create + Mekanism + Flux Networks + Ars Nouveau" core Ruben likes is still
+   **1.21.1-ONLY**. So the version choice is a fork: 26.1.2 (native EnderIO/AE2/Powah/Xycraft
+   stack) vs 1.21.1 (Create/Mekanism/Flux/Ars). Full verified matrix + Modrinth-modpack inspection
+   recipe in `references/26.x-neoforge-mod-availability.md`. Confirm with the user; also confirm
+   scope (fresh pack vs. extend an existing server) — it changes everything.
 
 2. **Map wishlist → real mod names.** Disambiguate (see pitfalls: Dyson Cube vs Dyson Sphere
    Project; Create Aeronautics needs Sable).
@@ -37,8 +41,14 @@ the *selection → verification → assembly* pipeline.
      Flux, AE2 Things, Embeddium Extras, Connectivity, Cupboard) → **CurseForge-format
      self-contained zip** (every jar bundled; friends need no CF API key). Reuse
      `minecraft-server-ops` refs: `shareable-modpack-export.md` + `full-self-contained-zip.md`.
-   - Modrinth-native-only mods (Create Aeronautics, Sable) go into `overrides/` for a CF zip;
-     a `.mrpack` only makes sense if NO core mod is CF-only.
+   - **Prism Launcher: a self-contained `.mrpack` works even with CurseForge-only mods.** Put every
+     jar in `overrides/mods/` and leave `files: []` — no Modrinth API resolution, so AE2, FTB Quests,
+     Distant Horizons, etc. are all fine. Prism imports it via Add Instance → Import. For Ruben's own
+     packs, deliver by dropping the file in `~/homeserver/www/` → `https://oathless.dev/files/<name>`
+     (his Caddy static route). Full schema + build recipe: `references/prism-mrpack-and-distribution.md`.
+   - Modrinth-native-only mods (Create Aeronautics, Sable) go into `overrides/` for a CF zip.
+     (The CurseForge-launcher format — `manifest.json` + project/file IDs — is a separate target,
+     only needed if someone imports through the CurseForge app itself.)
 
 5. **Bundle the perf stack** — server + client (see reference). Shaders are OPT-IN, not forced
    (FPS killer on low-end machines). The server perf stack can be copied jar-for-jar from
@@ -88,10 +98,38 @@ Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
   rejected — Apotheosis/Apothic suite + Occultism/Modonomicon/Ars Ocultas were pulled after the user
   objected "you added a lot of mods without my input". Suggested-but-unrequested mods belong in a
   *proposal list* for the user to approve, never in the assembled pack.
+- **Curating a client build from a server install:** a server's `data/config/` dir reveals client-only
+  mods — their `*-client.toml` / `sodium-mixins.properties` / `iris-excluded.json` / `entityculling.json`
+  configs ship via pack `overrides/` even though the jars never load server-side. Grep it to reconstruct
+  the client mod list when the FTB manifest API is unavailable. For a client+server split: `client/mods/`
+  = full set, `server/mods/` = minus client-only render/QoL mods. Details + the expanded 26.1.2 tech
+  inventory in `references/26.x-neoforge-mod-availability.md`.
 - **Loader version pins get ignored by Prism** — a self-contained pack pinned to `neoforge-21.1.250`
   still installs the LATEST NeoForge on the client, causing "Incompatible client! Please use NeoForge
   X" + cascading channel errors (e.g. glitchcore:sync_config). See `minecraft-server-ops` pitfall
   "Incompatible client! Please use NeoForge" for the fix (bump server to latest 21.1.x or pin client).
+- **Verify a jar's `META-INF/neoforge.mods.toml` before trusting it — versionRange isn't the whole story.**
+  A mod can pass the NeoForge *version* check and still not load: (a) the `modLoader` field may name a
+  feature your NeoForge lacks — e.g. Zoomify 2.17+ declares `modLoader = 'klf'` (Kotlin Language
+  Features), which older NeoForge pins don't recognize; (b) extra hard deps are listed that you don't
+  ship (e.g. Controlling requires the `searchables` library). Unzip the jar, read `mods.toml`, and
+  check `modLoader` + every `[[dependencies]]` block, not just the neoforge versionRange.
+- **Merging a source pack's `config/` tree — don't nest it.** If you `copytree` the merge-output
+  root into `overrides/config`, you silently get `overrides/config/config/…` (Prism installs to
+  `.minecraft/config/config/`, which Minecraft never reads). Copy `…/config → overrides/config` and
+  `…/defaultconfigs → overrides/defaultconfigs` separately, then assert no `'config/config/'` entry
+  exists in the archive. Also: to reproduce a source pack's **worldgen**, copy its *config files*
+  (Evo 2 ships non-default Tectonic `vertical_scale: 1.06` + Terralith `skylands: true`), not just
+  its mod jars. See `references/prism-mrpack-and-distribution.md`.
+- **FTB Quests ids MUST be positive 64-bit longs.** Quest/chapter/task/reward/group ids are stored as
+  signed `long`s. A 16-hex id whose first digit is `8`–`F` parses as NEGATIVE, and FTB Quests silently
+  REJECTS it — assigning a fresh id on server load. That breaks the matching `chapter.<ID>.title` /
+  `quest.<ID>.title` lang keys, so every affected chapter renders "Unnamed". Generate ids with
+  `format(secrets.randbits(63), '016X')` (always starts `0`–`7`), NOT `uuid4().hex[:16]` (which starts
+  `8`–`F` ~50% of the time). Lang key format is `chapter.<ID>.title` / `chapter_group.<ID>.title` /
+  `quest.<ID>.title` in `lang/en_us/*.json5` — NOT a bare `"<ID>": "Title"` map. After first server
+  load, FTB Quests re-serializes these files to unquoted-key JSON5; verify live ids == source ids
+  (no reassignment) before trusting titles.
 - **Dyson Cube Project** (Buuz135, CurseForge, 1.21.1 NeoForge, "build a Dyson sphere around the
   sun") ≠ **The Dyson Sphere Project** (Modrinth, 1.20.1 Forge only). When a user says "Dyson",
   confirm which.
@@ -104,6 +142,15 @@ Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
   (Chunky pregen covers worldgen lag). Don't ship both.
 - **Embeddium + Oculus + Distant Horizons must be version-aligned** or you get client crashes /
   "network protocol error" disconnects. Pin one compatible set.
+- **Chunky is server-only — never ship it in the client build.** Chunky (world pre-generation) only
+  registers its `ChunkyProvider` on a dedicated server. If the client jar is also present, Distant
+  Horizons' `ChunkyAccessor.bindOnGenerationProgressEvent()` calls `ChunkyProvider.get()` the moment
+  the client receives its first chunk packet → `IllegalStateException: Chunky is not loaded` →
+  `Failed to handle packet ClientboundBundlePacket, disconnecting` → **"Network Protocol Error"** kick.
+  Diagnosis signal: thousands of `ClientPayloadHandler: Received synced attachments from unknown entity`
+  WARN lines right before the disconnect. Fix: keep Chunky in `server/mods/` only (delete the jar from
+  the client instance). It's the same failure family as the Embeddium/Oculus/DH alignment pitfall but a
+  distinct trigger — check this when the client crashes on *join* (not startup).
 - **Shaders on low-end machines** tank FPS. Ship Oculus + shaderpack opt-in (off by default);
   low-end friends run Embeddium + DH with shaders disabled — DH is the cheap-render-distance
   answer.
@@ -119,10 +166,58 @@ Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
   Apotheosis twice (removed it from his own pack, then asked for an Apotheosis-free ATM10
   alternative) — treat Apotheosis as opt-in, default OFF.
 
+## Client/server build split & client-only mod discovery
+- Deliver a pack as two folders: `client/mods/` (everything) and `server/mods/` (shared only).
+  Client-only mods (Sodium, Iris, Distant Horizons, ImmediatelyFast, FlickerFix, Athena, Entity
+  Culling, Mouse Tweaks, AppleSkin, Just Zoom, etc.) are excluded from `server/mods/`. Verify the
+  diff is exactly the client-only set with `diff <(ls client | LC_ALL=C sort) <(ls server | LC_ALL=C sort)`
+  — pass `LC_ALL=C sort`; bare `comm`/`sort` breaks on case-sensitivity and reports false diffs.
+- **When you only have a server's files (no client manifest), the `config/` dir reveals client-only
+  mods**: packs ship configs for client mods that get copied to the server even though the server never
+  loads them (`sodium-mixins.properties`, `iris-excluded.json`, `entityculling.json`,
+  `immediatelyfast.json`, plus `*-client.toml` suffixes like `appleskin-client.toml`). Grep `config/`
+  for render/perf/client keywords to enumerate the client mod set the server mods/ folder omits.
+- **Client-side required deps hide from server mods folders** (`side="CLIENT"` deps, e.g. Oritech→athena)
+  — see `references/26.x-neoforge-mod-availability.md` "Client-pack assembly pitfalls".
+- Quest authoring (FTB Quests JSON5) — see `references/ftb-quests-authoring.md`.
+
 ## Reference files
 - `references/1.21.1-neoforge-mod-availability.md` — verified availability/loader matrix for
   common tech-magic wishlist mods (CF-only vs Modrinth vs both), confirmed 1.21.1 NeoForge
   version pins, and the low-end client + server perf stack with verified slugs.
+- `references/26.x-neoforge-mod-availability.md` — verified 26.1.2 NeoForge availability matrix
+  (what HAS/NOT migrated), the version-fork decision, the keyless Modrinth-modpack inspection
+  recipe, and the BA+ ("Better Adventures+") pack identity + default 26.1.2 AE2 addon set.
 - `references/apotheosis-free-pack-options.md` — the "Apothic" family jar list, strip/nerf recipe,
   and verified per-pack Apotheosis inclusion status for 1.21 kitchen-sinks. Use when the user asks
   for "ATM10-like but no Apotheosis" or any "which packs avoid mod X" question.
+- `references/ftb-quests-authoring.md` — how to author an FTB Quests 2001.x JSON5 quest book for 26.1.2
+  (chapter/quest/lang file structure, the `id: "..."` item-ID-oracle grep, Python `json.dump`
+  generation) and Ruben's reward preferences: no FTB coin currency, XP + small useful item rewards,
+  per-player `team_reward: false`. Use when a pack needs quests/chapters.
+- `references/puffish-skills-and-magic-integration.md` — Puffish Skills + Paxi datapack delivery,
+  category.json required fields (incl. the mandatory `background` tile), per-category XP source event
+  types (`mine_block`/`#c:ores`, `increase_stat`, `criterion`, `deal_damage`/`kill_entity`/
+  `take_damage`), mod attribute namespaces (puffish_attributes / arsmagicalegacy / combat_roll),
+  Combat Roll + Thaumaturge `crimsonPortalRarity` integration, and the "never reuse a kitchen-sink
+  Puffish tree" pitfall. Use when adding skills/magic to a pack.
+- `scripts/depcheck.py` — jar-metadata dependency-closure checker. Run `python3 depcheck.py <mods_dir>`
+  after assembling any pack to catch missing hard deps (auto-confirms JiJ-bundled deps). Unresolved
+  entries are either missing jars, GAMELIBRARY mods (MANIFEST `FMLModType`), or combined-jar fabric-*
+  false positives — see the 26.x reference for the full decision tree.
+- `references/prism-mrpack-and-distribution.md` — self-contained `.mrpack` schema for Prism import
+  (`files: []`, jars+config in `overrides/`), the double-nested `config/config/` pitfall, copying a
+  source pack's configs to reproduce worldgen, and Ruben's Caddy delivery route
+  (`~/homeserver/www/` → `https://oathless.dev/files/<name>`). Use when building a client pack to
+  import into Prism or delivering any pack over HTTP.
+- `references/apple-silicon-client-performance.md` — why macOS FPS is capped (OpenGL-on-Metal),
+  MetalForge (native Metal backend, ~2× FPS but incompatible with Iris shaders + Distant Horizons),
+  no-trade-off FPS levers (RD 8–10, Retina resolution, entity shadows off, heap + `-XX:+UseZGC`),
+  and the macOS + Distant Horizons shaderpack compatibility lists. Use when a user reports low FPS
+  on a Mac or wants shaders that work with DH.
+
+## Client/server split + client-only discovery (also see 26.x reference)
+The server's `config/` dir reveals the full client+server mod list (packs ship pre-generated configs
+for client-only mods too) — use it to discover client perf/QoL mods the server `mods/` omits, without
+touching the FTB/CurseForge manifest. For dual builds, keep `client/mods/` + `server/mods/` + a
+`client-only-mods.txt`, and verify with an `LC_ALL=C sort` diff that only the client-only jars differ.

@@ -9,11 +9,14 @@ Deployed as `minecraft-evo2` (TYPE=FTBA, `FTB_MODPACK_ID=135`, `itzg/minecraft-s
 Chunky **1.5.4 ships pre-bundled** — no download needed. Same command set as 1.4.x, but there is NO `chunky version` (returns "Incorrect argument for command"). Measured on the i5-9500T: **~12–20 chunks/sec WITHOUT C2ME** (63,001 chunks at radius 2000 in ~1h11m) — faster than the older ATM10aero estimate, so C2ME is unnecessary here. Completion detection: `chunky progress` returns `[Chunky] No tasks running.`; the `Task finished … (100.00%)` line lands in the server LOG, not the progress output. No `betterchunkloading` in this pack, so C2ME wouldn't conflict if ever wanted.
 
 ## Config toggles (data/config/, bind-mounted — edit host file then `docker restart`)
-- **Waystones** → `waystones-common.toml` `[rules] enableXpCosts = false` (master switch for XP; siblings `enableDurability`, `enableCooldowns`). Balm "common" configs sync server→client automatically.
+- **Waystones** → `waystones-common.toml` `[rules] enableXpCosts = false` (master switch for XP; siblings `enableDurability`, `enableCooldowns`). Balm "common" configs sync server→client automatically. Note: FTB ships `enableXpCosts = false` by default, so a "make waystones free" request is usually already satisfied — verify the value before editing.
+- **Sophisticated Backpacks** → `sophisticatedbackpacks-server.toml` `[nerfs] tooManyBackpacksSlowness = false` disables the multi-backpack slowness debuff entirely (`maxNumberOfBackpacks` / `slownessLevelsPerAdditionalBackpack` then moot). Default `true`; set `false` to remove the "slower with multiple backpacks" mechanic.
+- **Thaumaturge portals** → `thaumaturge-common.toml` `[world] crimsonPortalRarity` = chunks per wild lesser crimson portal, HIGHER = rarer (default 500; `0` disables wild portals entirely). "Decrease portal spawn frequency" = raise this (bumped to 2000, ~4× rarer, Oct 2026).
 - `server.properties` is clobbered on FIRST boot by the `dsp` mod (see SKILL.md); override durable server settings via `/data/default-server.properties` (append keys) or via env on subsequent boots.
 
 ## Mod item IDs (for `/give`)
 - `kindredspirits:golden_bone` — Golden Bone, Kindred Spirits' **Direwolf** taming item (33% tame chance per feed).
+- `naturescompass:naturescompass` — Nature's Compass (jar `NaturesCompass-26.1-3.3.0-neoforge.jar`). Item ID is `naturescompass` NOT `natures_compass`; the `models/item/naturescompass_00..31.json` files are just the 32 needle-angle frames, not separate items. Confirm via the jar's `lang/en_us.json` (`item.naturescompass.naturescompass`). Also in-pack: Explorers Compass (same pattern, `explorerscompass`).
 - Kindred Spirits: 7 species (Nightfox, T-Rex, Baby Dragon, Mini Player, Gremlin, Quokka, Direwolf). **ONE active bonded companion at a time** (not a pet army); the Kindred Charm summons/dismisses it, opens its storage, and deepens the bond. `config/kindredspirits-common.toml` has progression/bond/taming tuning (no companion-count knob).
 
 ## Resource-farming mod list (do NOT recommend the absent classics)

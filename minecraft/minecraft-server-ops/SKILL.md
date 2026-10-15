@@ -7,13 +7,13 @@ description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-s
 # Minecraft Server Operations
 
 Operational knowledge for running Ruben's self-hosted Minecraft server(s) on the
-OptiPlex homelab. The primary instance is Enigmatica 10 (`minecraft-e10`,
-itzg/minecraft-server:java21, AUTO_CURSEFORGE, `CF_SLUG=enigmatica10`,
-1.21.1 NeoForge 21.1.252, 8G RAM) on 25565 = mc.oathless.dev. Historical: the
-Oathless Server Pack (world archived at `homeserver/minecraft-oathlesssp/data`) and
-ATM10 Aeronautics (`minecraft-atm10aero`, retired) — the latter is still referenced
-as the running example in several reference files below. Hardware: i5-9500T (6c/6t, 35W T-series),
-30GB RAM, NVMe.
+OptiPlex homelab. The primary instance is the custom **evo2-tech** pack
+(`minecraft-evo2tech`, itzg/minecraft-server:java25, TYPE=NEOFORGE, VERSION=26.1.2,
+NEOFORGE_VERSION=26.1.2.109, 12G RAM) on 25565 = mc.oathless.dev — it replaced FTB
+Evolution 2 (`minecraft-evo2`, retired; data archived at `homeserver/minecraft-evo2-archive/`).
+Historical/retired servers still referenced as running examples in several reference files:
+Enigmatica 10 (`minecraft-e10`), the Oathless Server Pack (`minecraft-oathlesssp`), and ATM10
+Aeronautics (`minecraft-atm10aero`). Hardware: i5-9500T (6c/6t, 35W T-series), 30GB RAM, NVMe.
 
 ## Key facts / mental model
 
@@ -198,7 +198,32 @@ friends pack → Enigmatica 10), the compose recipe:
   The old container becomes an orphan (harmless warning) — leave it stopped as the recoverable archive.
 - The pack downloads on first start (~2 min for a 312-mod pack on this box).
 
-### Swapping to an FTB App pack (TYPE=FTBA)
+### Deploying a Modrinth modpack (extract .mrpack → TYPE=NEOFORGE)
+
+The itzg `TYPE=MODRINTH` path exists but manual-jar-drop persistence there is UNVERIFIED. The
+controllable route is the proven `TYPE=NEOFORGE` + manual `data/mods/`:
+1. Inspect the pack keylessly — see `minecraft-modpack-creation` → `references/26.x-neoforge-mod-availability.md`
+   (Modrinth API + `.mrpack`'s `modrinth.index.json`).
+2. Read `modrinth.index.json` `dependencies` for the exact loader pin — BA+ 1.39 pins `neoforge 26.1.2.99`,
+   NOT the `.109` FTB Evo 2 uses. Set `NEOFORGE_VERSION` to the PACK's value so its own mods stay happy.
+3. Download each `files[]` jar (they carry direct CDN URLs) into `data/mods/`; extract `overrides/` into
+   `data/` (configs, `overrides/mods/`, resourcepacks/shaderpacks).
+4. Curate additions by copying exact jar names from an existing 26.1.2 pack's `data/mods/` (FTB Evo 2 has
+   everything), then boot-iterate — NeoForge ModSorter lists every missing dep at once.
+
+## Box-saturation diagnostic: shell builtins work but fork/exec hangs
+
+Symptom on the homelab (i5-9500T 6c/6t, MC server on 12G): `pwd`/`echo` (bash builtins) return
+instantly, but ANY fork+exec — `whoami`, `ls -la`, `python3`, `docker ps` — stalls and the terminal
+reports `Command interrupted` (exit 130). `ls -la` and `whoami` specifically trigger `getpwuid`/`getgrgid`
+(owner-name NSS lookups), so even a `-l` listing hangs while plain `ls -1`/`os.listdir` is fine. This is
+the MC server saturating the box (likely mid-pregen), NOT a broken terminal.
+Work around it with the NON-forking tools: `read_file`/`write_file`/`patch` keep working (they read/write
+specific files directly, no shell), and Python `os.listdir` avoids NSS. Use them to STAGE while the shell
+is down — read `whitelist.json`/`ops.json`/`docker-compose.yml`, write the new compose service + a deploy
+script — then run the docker commands once load clears. Don't chase it as a terminal bug.
+
+## Swapping to an FTB App pack (TYPE=FTBA)
 
 FTB packs (FTB Evolution 2, etc.) are distributed via the FTB App. Deploy with `TYPE=FTBA` (cfwidget returns empty for them even though the pack JSON carries a `meta.curseforgeProjectId` — don't infer "not on CurseForge" from an empty cfwidget response):
 
@@ -283,7 +308,7 @@ the CF API, extract manifest.json + modlist.html + overrides/, bundle extra mods
 friends MUST install the server's exact CF version (CF shows a newer "latest" → mod
 mismatch), content-mod extras need a client match while Chunky/C2ME/DH-server are
 server-side-only, and the ~100MB pack zip exceeds Discord's 25MB limit (distribute via
-Forgejo release / Caddy, or just send the tiny client-required jars).
+Forgejo release / Caddy, or just send the tiny client-required jars). **Ready-made download route on this box:** drop the file in `~/homeserver/www/` and share `https://oathless.dev/files/<name>` — Caddy's `handle_path /files/*` route strips `/files` and serves that dir (Ruben already distributes packs there: `Oathless-Server-Pack-*.mrpack`, `Oathless-Shaders-Addon.zip`).
 
 ## Building a shareable PrismLauncher modpack for players
 
@@ -363,6 +388,7 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
 
 ## Pitfalls
 
+- **A LIVE server crash-looping (`Up N seconds (health: starting)` repeating, huge `RestartCount`) with `NoClassDefFoundError: <pkg>.<Class>` = a mod JAR is MISSING from `data/mods/`.** The class name encodes the absent mod; the crash report names the referencing mod. Diagnose: `docker inspect <c> --format '{{.RestartCount}}'` (thousands = loop), `docker logs <c> 2>&1 | grep NoClassDefFoundError`, then read the newest `data/crash-reports/*.txt` — its `Mod loading issue for: <modid>` line is the mod that FAILED to load, and `Caused by: NoClassDefFoundError` gives the missing class. Verified Oct 2026: FTB Evolution 2 crash-looped because `ftb-evolution-companion` referenced `dev.shadowsoffire.gateways.entity.GatewayEntity` but the `gateways` jar (Gateways to Eternity) was absent from `mods/`. If the user is abandoning the pack anyway, replace it (swap workflow below) rather than fixing the missing jar.
 - **Curate tightly — don't kitchen-sink a pack.** Ruben wants his explicit mod wishlist + load-bearing
   essentials (JEI/Jade/map, FTB Chunks, Polymorph+AlmostUnified for recipe conflicts, the perf stack),
   NOT a pile of "suggestions". He pushed back hard ("you added a lot of mods without my input") after a
@@ -414,7 +440,7 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
 - **Long pregen watchers can get orphaned/reaped while sleeping.** A `sleep 300` polling loop may be reported dead even when the target task (Chunky, running *inside* the server process) is fine. Design the watcher to be re-runnable: killing and relaunching it loses nothing because the actual task lives in the server, not the watcher.
 - **"No 'can't keep up' yet = fine"** — a fresh 5MB world proves nothing; stress only shows after exploration.
 - **Recreating a container after a compose change (ports/env/volumes):** `docker compose up -d` is
-  refused by the terminal tool (long-lived-process guard). And `docker start <name>` does NOT apply
+  refused by the terminal tool (long-lived-process guard) in FOREGROUND — but `terminal(background=true)` on `docker compose up -d <svc>` lets it through (it's a detached one-shot returning in ~1s, so background mode is fine and simpler than the rm/create/start dance; verified Oct 2026). And `docker start <name>` does NOT apply
   config changes — it just restarts the existing container. To apply a compose edit (e.g. adding or
   removing a UDP port mapping), recreate without the `up` keyword — all three return instantly:
   `docker rm -f <name> && docker compose create <name> && docker start <name>`. Data volumes persist
@@ -441,10 +467,10 @@ Direct itzg containers are the default. Crafty's HTTPS-only server + self-signed
 For 2+ servers on one IP, players default to port 25565 — a second server on 25566 is never reached. mc-router (`itzg/mc-router`) reads the hostname from the Minecraft handshake and routes `mc.oathless.dev`→vanilla, `modded.oathless.dev`→modded. Servers drop their `ports:` mapping; mc-router takes 25565. Pitfall: set `SERVER_PORT` to match the mc-router backend port + `OVERRIDE_SERVER_PROPERTIES: true`, or the itzg health check pings the wrong port.
 
 ### Whitelist management
-Two layers: RCON (`whitelist on`/`whitelist add`) is instant; `WHITELIST` + `ENFORCE_WHITELIST` env vars persist across recreation. `ENFORCE_WHITELIST` is ignored when `OVERRIDE_SERVER_PROPERTIES=false` — use RCON then. "That player does not exist" = invalid Mojang username (verify via `api.mojang.com/users/profiles/minecraft/<name>`).
+Two layers: RCON (`whitelist on`/`whitelist add`) is instant; `WHITELIST` + `ENFORCE_WHITELIST` env vars persist across recreation. To add a player durably, do BOTH: RCON `whitelist add` (instant) AND append to the compose `WHITELIST` env var (survives recreate). `OVERRIDE_WHITELIST` is unset (default false) on this box, so the env var never clobbers RCON-added names — the two stay consistent. `ENFORCE_WHITELIST` is ignored when `OVERRIDE_SERVER_PROPERTIES=false` — use RCON then. "That player does not exist" = invalid Mojang username (verify via `api.mojang.com/users/profiles/minecraft/<name>`).
 
 ### RCON console + TPS
-`docker exec <c> rcon-cli "<cmd>"` gives a full console with no panel. TPS via RCON: `debug start` → sleep → `debug stop` (`spark tps` returns empty via RCON — chat-only output).
+`docker exec <c> rcon-cli "<cmd>"` gives a full console with no panel. TPS via RCON: `debug start` → sleep → `debug stop` (`spark tps` returns empty via RCON — chat-only output). **OP/deop: there is NO vanilla `op list` command.** `rcon-cli "op list"` is parsed as `op <player>` with a player literally named "list" — it silently OPs a bogus `list` entry in `data/ops.json` (which even gets a UUID). To list operators, read `data/ops.json` directly; revoke a bad entry with `deop <name>`. OP status is a plain JSON data file (persists across restarts; no compose env var like `WHITELIST`).
 
 ### Giving items / finding a mod item's registry ID
 
