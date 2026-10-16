@@ -20,6 +20,32 @@ Verified 2026-09 against the running ATM10 Aeronautics instance (1.21.1, NeoForg
 > keep an eye on which build is actually installed, because DH's network protocol changes
 > between versions (see the crash section below).
 
+### C2ME on MC 26.1.2 (NeoForge)
+
+C2ME now ships 26.1.2 builds (the 26.x line is current). Modrinth slug is **`c2me-neoforge`**
+(the bare `c2me` slug 404s — that's the Fabric/legacy name). Newest 26.1.2 build:
+`c2me-neoforge-mc26.1.2-0.4.0-alpha.0.100.jar` (2026-10-03, sha1 `a035b1b5...`, ~3.7 MB).
+Measured on evo2-tech (6c/6t i5-9500T): ~11 → ~31 chunks/s (~3x), CPU 274%→595% (all 6 cores
+saturated). The ~10x figure above was a bigger pack/CPU; on 6 physical cores C2ME's ideal ceiling
+is ~5-6x, and heavy Tectonic/Lithostitched density functions bound the real gain to ~3x here.
+DH 3.3.3 auto-detects C2ME at boot and coordinates chunk access — no config needed. C2ME is
+server-side only (players install nothing); it also speeds chunk loading during normal play, so
+leave it in after pregen.
+
+### Chunky task management (1.5.x)
+
+- `chunky cancel` is **two-step**: first call warns "Cancelled tasks cannot be continued... type
+  '/chunky confirm'", then `chunky confirm` actually cancels (`confirm` isn't in `chunky help`).
+- Expand a running task's radius: cancel+confirm → re-set `center`/`radius`/`world` → `chunky start`
+  (old chunks kept + skipped via `forceLoadExistingChunks: false`).
+- After a restart with `continueOnRestart: false`, a saved task makes `chunky start` REFUSE
+  ("A task was already started for this world... type '/chunky confirm'") while `chunky progress`
+  shows "No tasks running". Resume with `chunky continue`. The saved `tasks/<world>/<dim>.properties`
+  recorded the pre-restart radius correctly in this case — still cross-check it (it goes stale after
+  an OOM crash, per the main SKILL.md).
+- Combined Chunky→DH watcher that chains both and notifies on completion:
+  `scripts/pregen-dh-watch.sh` (supersedes `scripts/chunky-watch.sh` when DH LODs should follow).
+
 ## ⚠️ Client/server DH version mismatch → "network protocol error" on join
 
 **Symptom (client):** player crashes joining with a generic "network protocol error" /
@@ -137,3 +163,10 @@ This is the #1 source of "DH won't render / crashes" on ATM10. Non-shader DH is 
 - "Can my server handle this pack?" → assess single-core CPU + worldgen, then CHUNKY pregen.
 - "I want distant terrain visuals" → DH on the CLIENT, pregen LODs per-client.
 - Only put DH server-side if you specifically want shared LODs AND have CPU/RAM to spare.
+
+## DH 3.3.3 CLI facts + auto-chaining Chunky → DH (26.1.2 / evo2-tech)
+
+- `dh help` prints the full subcommand shapes. Key ones: `dh pregen start <dimension> <x> <z> <chunkRadius>` (radius in CHUNKS), `dh pregen status`, `dh pregen stop`.
+- `/dh pregen status` prints exactly **`Pregen is not running`** when idle. Use that string as the idle/completion sentinel — but guard it with the same container-`StartedAt` comparison as Chunky, because a clean finish AND a crash-restart both land back on "not running" (identical ambiguity to Chunky's "No tasks running").
+- **evo2-tech (MC 26.1.2) specifics:** DH jar `DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar`; Chunky `Chunky-NeoForge-1.5.4.jar` is bundled (NO C2ME) and pregens at ~16 cps on the i5-9500T (observed 765 chunks / 0.54% at 16.2 cps, ETA ~2.4 h for radius 3000 blocks / 141k chunks). Server mods dir also ships ferritecore + modernfix + servercore (perf stack present).
+- **Auto-chain:** `scripts/pregen-dh-watch.sh` polls Chunky to 100%, then starts + monitors DH LOD pregen in one background job. Exit 0 = both done; exit 1 = lost task or DH failed to start.

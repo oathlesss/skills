@@ -28,9 +28,7 @@ Aeronautics (`minecraft-atm10aero`). Hardware: i5-9500T (6c/6t, 35W T-series), 3
     this is what fixes "can't keep up" lag.
   - **Distant Horizons `/dh pregen`** generates *LODs* (simplified visual terrain) —
     cosmetic, does NOT reduce chunk-gen lag.
-- **Distant Horizons is primarily a CLIENT mod.** The server-side jar exists only to
-  pre-gen LODs shared across clients, and is CPU/RAM hungry — DH's own guidance says
-  disable it server-side on modest boxes and let clients generate their own LODs.
+- **Distant Horizons is primarily a CLIENT mod, but 3.3.3's server-side LOD serving is cheap and Ruben WANTS it.** On the server, DH builds LODs FROM REAL CHUNKS (fed by Chunky pre-gen) and uploads them to clients — NOT the old CPU-hungry fake-terrain "Distant Generation" (that was removed in 3.x). Controlled by the `[server]` section of `config/distanthorizons.toml` (`synchronizeOnLoad=true`, `generationBoundsRadius=0`=unlimited — sensible defaults, no config needed). Enable by dropping the DH jar (combined fabric+neoforge) into `data/mods/` + recreate; on boot it creates `world/dimensions/*/data/DistantHorizons.sqlite` per dimension and logs benign `Unknown Chunk Generator detected ... Distant Generation May Fail!` for CUSTOM dims (Thaumaturge Outer Lands, AE2 spatial storage) — the overworld is fine. To make LODs actually exist, Chunky-pregen the real chunks first (DH only covers chunks the server has generated). The older "keep DH client-only on a small box" guidance predates 3.3.3 and this user's explicit ask — verify against the current DH version.
 
 ## Performance assessment procedure
 
@@ -46,12 +44,28 @@ Aeronautics (`minecraft-atm10aero`). Hardware: i5-9500T (6c/6t, 35W T-series), 3
 **Tuning levers, in order of impact:** cut view/sim distance (10→6 ~halves chunk load)
 > pre-generate the world (Chunky) > switch CPU governor powersave→performance.
 
+**With Distant Horizons server-side, the server view-distance can (and should) be low** — DH clients render distant terrain from LODs, so the server only needs to track/send the near ring. evo2-tech runs `view-distance 6` / `simulation-distance 5` (down from 8/6); `simulation-distance 5` is the floor before mobs/farms stop ticking in range. Lowering it is an env change (`VIEW_DISTANCE`/`SIMULATION_DISTANCE` baked into server.properties on boot) that needs a container RECREATE — so do it BEFORE starting pregen, because a mid-pregen restart wipes the in-flight Chunky task.
+**Lowering `VIEW_DISTANCE`/`SIMULATION_DISTANCE` is the cheap win when DH is server-side** —
+clients render LODs beyond the server's view-distance, so the server stops tracking/sending
+distant chunks. evo2-tech runs view-distance 6 / sim-distance 5 (down from 8/6). Change via
+compose env + container RECREATE (`docker rm -f <c> && docker compose create <c> && docker start <c>`;
+`docker start` alone does NOT apply env changes). **Do the recreate BEFORE starting Chunky** — a
+restart mid-pregen wipes the in-flight task.
+
 ## Pre-generation workflow (Chunky + C2ME, then DH LODs)
 
 Order matters: **real chunks first, then DH LODs** (DH can build LODs from existing
 chunks instead of re-worldgenning). Exact version numbers and the full command
 sequence live in `references/pregen-and-distant-horizons.md` — read it before running
 anything; version IDs drift across MC versions and must be verified against the CF API.
+
+**Operational gotchas (verified Oct 2026 on evo2-tech, Chunky 1.5.4):**
+
+- **Lower server view/sim distance BEFORE pregenning — the change needs a container recreate, which wipes the in-flight Chunky task.** With Distant Horizons installed (clients render far terrain), drop `VIEW_DISTANCE` 8→6 and `SIMULATION_DISTANCE` 6→5 in compose, recreate (`docker rm -f <c> && docker compose create <c> && docker start <c>`), verify `server.properties` shows the new values, THEN start Chunky. Doing it mid-pregen loses the task (recoverable via `chunky continue`, but avoid).
+- **`chunky cancel` is two-step in 1.5.x:** the first `chunky cancel` replies "Cancelled tasks cannot be continued... type '/chunky confirm'"; run `chunky confirm` to actually cancel. (`confirm` is not listed in `chunky help` but exists.)
+- **To EXPAND a running task's radius** (e.g. 3000→6000): `chunky cancel` + `chunky confirm`, re-set `center`/`radius`/`world`, then `chunky start`. Already-generated chunks are kept and skipped on the new task (`forceLoadExistingChunks: false`).
+- **After a container restart, `chunky start` refuses if a saved task exists** — it replies "A task was already started for this world... type '/chunky confirm'", and `chunky progress` shows "No tasks running". Resume with `chunky continue` (NOT `start`) — it skips done chunks. The saved `config/chunky/tasks/<world>/<dim>.properties` still records the pre-restart radius correctly here (verify it anyway — it can go stale after an OOM crash). Set `continueOnRestart: true` in `config/chunky/config.json` to auto-resume instead.
+- **C2ME exists for MC 26.1.2** — Modrinth slug **`c2me-neoforge`** (the bare `c2me` slug 404s); newest 26.1.2 build `c2me-neoforge-mc26.1.2-0.4.0-alpha.0.100.jar`. On the 6-core i5-9500T it took evo2-tech pregen ~11 → ~31 chunks/s (~3x) and saturated all cores (CPU 274%→595%); the ~5-10x in the reference was a bigger pack/CPU. Distant Horizons auto-detects C2ME at boot ("C2ME detected: DH's pre-existing chunk accessing will use methods handled by C2ME") — no config. C2ME is server-side only; players install nothing. See `references/pregen-and-distant-horizons.md`.
 
 **Chunky is NOT bundled in every pack** — check `data/mods/` first (E10 omits it; add
 `Chunky-NeoForge-1.4.23.jar`, CF file id 6383261, before pregen). Without C2ME, pregen runs
@@ -61,6 +75,9 @@ C2ME parallelizes to ~5x. **FTB Evolution 2 (MC 26.1.2) already bundles Chunky 1
 cost varies widely by pack, so measure the actual `chunky progress` rate instead of assuming the 4.6 cps
 baseline — and IGNORE the first `chunky progress` reading (a few seconds after `start` shows ~2–3 cps with a scary multi-hour ETA from JIT warmup; re-check after ~60s for the real ~15 cps). Chunky 1.5.x has NO `chunky version` command (it errors "Incorrect argument") — use
 `chunky help` to confirm; `center`/`radius`/`world`/`start`/`progress`/`continue` are unchanged from 1.4.x.
+
+**`chunky cancel` needs a second `chunky confirm`, and `chunky radius` does NOT resize a running task.**
+`chunky cancel` alone replies "Cancelled tasks cannot be continued ... type '/chunky confirm'" and leaves the task RUNNING; `chunky confirm` is a hidden command (absent from `chunky help`). Setting `center`/`radius`/`world` while a task runs only updates the *selection* — the in-flight task keeps its original radius, and `chunky start` then returns "Task already started for <world>!". To expand/shrink mid-pregen: `chunky cancel` → `chunky confirm` → re-set center/radius/world → `chunky start`. Already-generated chunks are skipped (`forceLoadExistingChunks: false`), so nothing generated is wasted.
 Kick any online players first (`rcon-cli "kick <name> Pregen starting"`) — pregen + a live player tanks TPS for both. Pregen runs *inside* the server process, so the server stays joinable
 throughout — fine on a fresh world with no players yet.
 
@@ -103,6 +120,14 @@ generation rate and ETA.
 and modded dims). Count/extent the generated area from there:
 `ls dimensions/minecraft/overworld/region/*.mca` — filenames `r.<x>.<z>.mca` are region coords
 (×512 = block range), so the min/max `x`/`z` give the generated footprint.
+
+## World disk size (estimate before/while pregenning)
+
+Measured on evo2-tech (26.1.2 modded overworld): a full 1024-chunk region file is ~21 MB (deflate) ≈ ~20 KB/chunk. Radius → chunks → overworld disk:
+- `radius 3000` (6×6 km) = ~141k chunks ≈ ~2.8 GB
+- `radius 6000` (12×12 km) = ~562k chunks ≈ ~11 GB
+
+DH LOD data (`Distant_Horizons_server_data/` + per-dimension sqlite) adds ~1–2 GB on top. Cross-check any estimate against the live `du -sh .../world` at a known `chunky progress` % (e.g. world @ 3% ≈ 424 MB → ~13 GB total, consistent). Nether/end not included — a few more GB if pregenned later.
 
 ## Finding the exact MC + NeoForge version + pack identity
 
@@ -435,7 +460,8 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
  stop/crash keywords, do NOT include `shutdown` or `reboot` in the pattern — the terminal tool
  hardline-blocks ANY command containing those words, even inside a `grep -iE '…'` regex (so
  `grep -iE 'stopping|shutdown|crash'` is refused outright). Use `stopping|stop|crash|fatal` instead.
-- **Installing DH server-side on a small box** — wasteful; keep DH client-only, pregen LODs per-client.
+- **Installing DH server-side on a small box** — the OLD guidance ("wasteful, keep client-only") is superseded for evo2-tech: Ruben wanted preloaded LODs for his friends, so DH is installed server-side and builds LODs from Chunky-generated chunks (cheap in 3.3.3). To enable: drop the DH jar into `data/mods/` + recreate; Chunky-pregen the real chunks so LODs have data. See the "Key facts" bullet for the config + benign dim warnings.
+- **Enabling RCON on a server that lacks it** (the hand-curated `evo2-tech` `TYPE=NEOFORGE` box ships with RCON OFF, unlike AUTO_CURSEFORGE which enables it by default). To drive `chunky`/console commands remotely, add to the compose service env: `ENABLE_RCON: "true"`, `RCON_PASSWORD: "<random>"`, `RCON_PORT: 25575`, then recreate the container (`docker compose up -d --force-recreate <svc>` in background mode). Verify with `docker exec <c> rcon-cli "seed"` (echoes the world seed).
 - **Background watcher scripts: `exec >>log 2>&1` triggers false "completed" notifications.** A `terminal(background=true, notify_on_complete=true)` process gets reported as `exit code None` ~30s in if the script redirects stdout with `exec` — that closes the pipe the process manager watches. Use `log() { echo "$*" | tee -a "$LOG"; }` and keep the pipe open. Also: `docker logs` is the *full history*, so a completion grep can match a prior boot — poll for a fresh signal (RCON `list` returning `players online`) instead.
 - **Long pregen watchers can get orphaned/reaped while sleeping.** A `sleep 300` polling loop may be reported dead even when the target task (Chunky, running *inside* the server process) is fine. Design the watcher to be re-runnable: killing and relaunching it loses nothing because the actual task lives in the server, not the watcher.
 - **"No 'can't keep up' yet = fine"** — a fresh 5MB world proves nothing; stress only shows after exploration.
@@ -610,7 +636,10 @@ missing client-side. Crop configs are NOT synced; ship them to every client.)
 - `references/minecraft-atm10-sky.md` — working ATM10 deploy config (historical — server is now ATM10 Aeronautics, `CF_SLUG=all-the-mods-10-aeronautics`).
 - `references/minecraft-add-individual-mods.md`, `references/minecraft-itzg-add-mods.md`, `references/minecraft-curseforge-add-mod.md`, `references/minecraft-add-mods.md` — four near-duplicate session recipes for adding a single extra mod to a running itzg AUTO_CURSEFORGE server via the CF/Modrinth API (slug→id, `modLoaderType=6`, `/download-url` vs `/download`, re-decrypt before restart, `.curseforge-manifest.json`). Consolidate these four into one on next touch.
 - `templates/backup-minecraft.sh` — nightly Minecraft world backup script, 7-day retention.
-- `references/world-reset-and-cleanup.md` — reset/regenerate a world on a running itzg server (delete only `data/world`, restart; whitelist/mods/quests survive; `dsp` clobber is one-shot) AND delete old/retired server dirs (root-owned `data/` husks need `sudo rm -rf` to finish).
+- `references/world-reset-and-cleanup.md` — reset/regenerate a world on a running itzg server (archive `data/world` by rename, then restart; whitelist/mods/quests survive; `dsp` clobber is one-shot; current `minecraft-evo2tech` dirs are ruben-owned so no sudo) AND delete old/retired server dirs (root-owned `data/` husks need `sudo rm -rf` to finish).
 - `scripts/chunky-watch.sh` — re-runnable background watcher that polls `chunky progress`. Exits 0 on genuine completion, 1 ONLY when the task was LOST to a server restart. "No tasks running" is AMBIGUOUS — Chunky reports it BOTH after a clean 100% finish (task removed) AND after a crash-restart wipes the task — so the script compares the container's `StartedAt` before/after: unchanged StartedAt + previously-saw-a-task = completed; changed StartedAt = lost. Also tolerates being launched before the task starts. (pair with terminal background=true + notify_on_complete=true).
+- `scripts/pregen-dh-watch.sh` — combined Chunky→DH watcher (supersedes `chunky-watch.sh` when DH LODs should follow Chunky): monitors Chunky to 100%, then auto-runs `dh pregen start` and monitors it to completion. Args: `<container> <dh_chunk_radius>`. Exits 0 only when BOTH finish. (pair with terminal background=true + notify_on_complete=true).
+- `scripts/pregen-dh-watch.sh` — combined watcher: polls `chunky progress` to 100% (same StartedAt disambiguation as chunky-watch), then auto-starts `dh pregen start minecraft:overworld 0 0 <chunkRadius>` and watches `dh pregen status` until it returns to the idle string "Pregen is not running". Usage: `bash pregen-dh-watch.sh <container> <dh_chunk_radius>` (defaults: minecraft-evo2tech, 400). Size the DH radius to cover the Chunky area (~1 chunk per 16 blocks). Re-runnable.
+- `scripts/pregen-dh-watch.sh` — combined watcher: Chunky → DH LOD pregen in one background job. Polls Chunky to 100% (StartedAt-guarded), then `dh pregen start minecraft:overworld 0 0 <chunkRadius>` and polls `/dh pregen status` until it returns to "Pregen is not running". Exit 0 = both done; 1 = lost task or DH failed to start. Args: `<container> [dh_chunk_radius]` (default minecraft-evo2tech, 200). Pair with terminal background=true + notify_on_complete=true.
 - `references/from-scratch-custom-pack.md` — build a NEW custom pack by curating a subset of an existing pack's mods: workflow, dependency gotchas (Radium×Create, BOP/Tectonic/AdAstra deps, Placebo dual-use), Plasmo Voice×Sable UDP conflict, Iris-vs-Oculus on 1.21.1, self-contained CF-zip/mrpack build, Forgejo large-binary distribution.
 - `references/custom-modpack-build.md` — build a from-scratch curated pack: subset-copy workflow, boot-iterate loop, keyless Modrinth download pattern, 1.21.1 dependency map, SRV routing, client-zip merge.

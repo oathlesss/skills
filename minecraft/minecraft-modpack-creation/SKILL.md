@@ -97,7 +97,11 @@ Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
   the wishlist (or an explicitly requested add, e.g. Building Gadgets). Unrequested additions get
   rejected — Apotheosis/Apothic suite + Occultism/Modonomicon/Ars Ocultas were pulled after the user
   objected "you added a lot of mods without my input". Suggested-but-unrequested mods belong in a
-  *proposal list* for the user to approve, never in the assembled pack.
+  *proposal list* for the user to approve, never in the assembled pack. This extends to INCREMENTAL
+  maintenance of a live pack: when the user asks "is there a perf/QoL mod we're missing?", answer
+  with a proposal + an explicit ask, then WAIT for "yes" before adding OR removing any jar. Ruben
+  corrected this hard — "dont add without asking" — after mods were auto-added during tuning. Every
+  add/remove on an existing pack requires prior approval.
 - **Curating a client build from a server install:** a server's `data/config/` dir reveals client-only
   mods — their `*-client.toml` / `sodium-mixins.properties` / `iris-excluded.json` / `entityculling.json`
   configs ship via pack `overrides/` even though the jars never load server-side. Grep it to reconstruct
@@ -114,6 +118,9 @@ Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
   Features), which older NeoForge pins don't recognize; (b) extra hard deps are listed that you don't
   ship (e.g. Controlling requires the `searchables` library). Unzip the jar, read `mods.toml`, and
   check `modLoader` + every `[[dependencies]]` block, not just the neoforge versionRange.
+  In 26.x a `-forge` filename suffix does NOT mean Forge-loader — Forge ended at 1.21.x, so any
+  `26.1` build (e.g. `BadOptimizations-2.4.1-26.1-forge.jar`) is NeoForge. Trust the `mods.toml`
+  (`modLoader: javafml` + `minecraft [26.1,)` + `side: CLIENT`), not the filename.
 - **Merging a source pack's `config/` tree — don't nest it.** If you `copytree` the merge-output
   root into `overrides/config`, you silently get `overrides/config/config/…` (Prism installs to
   `.minecraft/config/config/`, which Minecraft never reads). Copy `…/config → overrides/config` and
@@ -151,6 +158,14 @@ Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
   WARN lines right before the disconnect. Fix: keep Chunky in `server/mods/` only (delete the jar from
   the client instance). It's the same failure family as the Embeddium/Oculus/DH alignment pitfall but a
   distinct trigger — check this when the client crashes on *join* (not startup).
+- **DH and Chunky also conflict SERVER-side.** Putting Distant Horizons in `server/mods/` (for
+  server-side LOD generation) alongside Chunky fires the same `IllegalStateException: "Chunky is not
+  loaded"` during chunk promotion (`ReportedException: Exception during promotion of chunk to FULL
+  status`) while the server preps spawn/pregen. NON-fatal (boot completes, `Done (…)`, chunks still
+  generate) but it spams the log. Rule: DH and Chunky must not coexist on the SAME side. To get Chunky
+  pregen + DH LODs without the conflict, keep DH client-only and let the client build LODs from the
+  server's pregen'd chunks — don't add DH server-side when Chunky is already present.
+- **Apple Silicon Macs cap FPS on OpenGL — MetalForge is the 2× lever but excludes shaders + DH.** Ruben plays on an M2 Pro: ~90 fps unshaded is the OpenGL-on-Metal ceiling, NOT a pack problem. MetalForge (native Metal, NeoForge 26.1.2) ≈2× FPS but is mutually exclusive with Iris/shaders AND Distant Horizons. Full trade-off matrix, the DH×shader compatibility table (Complementary = opt-in toggle, BSL/Bliss = auto), macOS-safe shaderpacks, shaderpack `.mrpack` bundling, and the zoom/keybind-search loader gotchas (Zoomify `klf` vs Ok Zoomer `javafml`; Controlling needs `searchables`): `references/macos-apple-silicon-rendering.md`.
 - **Shaders on low-end machines** tank FPS. Ship Oculus + shaderpack opt-in (off by default);
   low-end friends run Embeddium + DH with shaders disabled — DH is the cheap-render-distance
   answer.
@@ -210,6 +225,10 @@ Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
   source pack's configs to reproduce worldgen, and Ruben's Caddy delivery route
   (`~/homeserver/www/` → `https://oathless.dev/files/<name>`). Use when building a client pack to
   import into Prism or delivering any pack over HTTP.
+- `references/macos-apple-silicon-rendering.md` — Apple Silicon (MetalForge vs OpenGL ceiling), the
+  DH×shader compatibility matrix, macOS-safe shaderpacks, shaderpack `.mrpack` bundling, and the
+  26.1.2 client-QoL loader gotchas (zoom + keybind-search). Use when the user reports low FPS on a
+  Mac, asks for shaders, or wants zoom/keybind-search on 26.1.2.
 - `references/apple-silicon-client-performance.md` — why macOS FPS is capped (OpenGL-on-Metal),
   MetalForge (native Metal backend, ~2× FPS but incompatible with Iris shaders + Distant Horizons),
   no-trade-off FPS levers (RD 8–10, Retina resolution, entity shadows off, heap + `-XX:+UseZGC`),

@@ -12,8 +12,8 @@
 # Disambiguate by comparing the container's StartedAt before/after: if the container
 # never restarted, a vanished task means it FINISHED; if StartedAt changed, it was lost.
 #
-# Usage: bash chunky-watch.sh [container]   (default: minecraft-evo2)
-CONTAINER="${1:-minecraft-evo2}"
+# Usage: bash chunky-watch.sh [container]   (default: minecraft-evo2tech)
+CONTAINER="${1:-minecraft-evo2tech}"
 STARTED_AT=$(docker inspect --format '{{.State.StartedAt}}' "$CONTAINER" 2>/dev/null)
 SAW_RUNNING=0
 
