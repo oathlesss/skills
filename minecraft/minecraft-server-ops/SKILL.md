@@ -423,6 +423,7 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
   incompatible with 'radium'` and refuses to load. On a Create pack, drop Radium entirely;
   Noisium + Saturn + ServerCore + ModernFix carry the tick-loop wins. Don't blind-add
   "Lithium/Radium" to a Create pack.
+- **C2ME on MC 26.1.2 (NeoForge, evo2-tech) thread-explodes and deadlocks Chunky pregen — do NOT add it.** The 1.21.1 C2ME success (~47 cps on ATM10/E10) does NOT generalize to 26.1.2 with heavy worldgen (Tectonic + Lithostitched + TerraBlender + Stellaris). Verified Oct 2026: after a clean boot + a 2–3× rate boost, the java process ballooned to **8,199 threads** (normal ≈ 150), memory climbed past the 12G heap into swap (5.4G swap used), the tick loop fell 124 ticks behind (`Can't keep up!`), and Chunky froze at the same chunk for 25+ min — CPU dropped to ~23% with the box idle (a deadlock, not a CPU bottleneck). Fix: `rm` the C2ME jar + restart (thread count returns to ~157), then `chunky continue` (skips done chunks). Spot the failure: `docker stats` PIDS in the thousands + swap climbing + `chunky progress` frozen at a fixed `Processed:` count across polls. Single-threaded baseline on evo2-tech is ~11–16 cps, NOT the 4.6 cps of older packs.
 - **C2ME conflicts with `betterchunkloading`** — adding C2ME to a pack that ships someaddon's
   betterchunkloading produces an FML `discouragedmod` warning (`[betterchunkloading; c2me] ... causes the
   world to save infinitely`) plus a mixin `InvalidInjectionException` on `DistanceManager`. Remove
