@@ -609,6 +609,25 @@ When removing a service from the stack, follow this sequence:
 
 8. **Verify:** `docker compose ps` should show no trace of the removed service, and `docker exec uptime-kuma sqlite3 /app/data/kuma.db "SELECT id, name FROM monitor WHERE name LIKE '%<service>%';"` should return nothing.
 
+### Removing a Caddy Route or Volume Mount (partial change)
+
+Removing a single Caddy route (e.g. a `file_server` endpoint) is a smaller change than full service removal, with two distinct cases that need different container treatment:
+
+- **Route-only removal** (Caddyfile edit): `docker compose restart caddy` — subject to the bind-mount caching pitfall below.
+- **Volume-mount removal** (docker-compose.yml edit): `restart` does NOT drop bind mounts — the recreated container keeps its existing mounts. You must recreate the container:
+  ```bash
+  docker compose up -d --force-recreate --no-deps caddy
+  ```
+
+**⚠️ PITFALL: `docker compose up -d` trips the terminal tool's long-lived-process guard.** It gets refused in the foreground even though `-d` detaches immediately. Run it with `background=true` (returns right away), then verify in a separate call.
+
+**Verify a removed route:**
+```bash
+docker exec caddy cat /etc/caddy/Caddyfile        # container view matches host (no stale route)
+curl -s -o /dev/null -w "%{http_code}\n" https://sub.oathless.dev/<removed-path>   # expect 404
+curl -s -o /dev/null -w "%{http_code}\n" https://sub.oathless.dev/                  # remaining route still 200
+```
+
 ## Caddy: Bind Mount Caching Pitfall
 
 **⚠️ PITFALL: `caddy reload` may report "config is unchanged" even after patching the Caddyfile on the host.** Docker bind mounts can cache the file at the container's view. After editing `/home/user/homeserver/caddy/Caddyfile`, a reload sometimes sees the pre-edit version.

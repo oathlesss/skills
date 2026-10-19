@@ -59,6 +59,13 @@ for `"id":` returns nothing; grep for `id: "`.
   (always starts `0`–`7`). **Verify after the first server load:** FTB Quests re-serializes the
   book to unquoted-key JSON5; diff live `chapters/*.json5` ids vs your source ids and assert NONE
   changed (and that `chapter_groups.json5` id is unchanged).
+- **Client and server quest trees MUST be byte-identical — generate ids once, not per-tree.** The
+  book ships under BOTH `client/config/ftbquests/` and `server/config/ftbquests/`. If a generation
+  script loops over both trees and calls `secrets.randbits(63)` per tree, the two runs get DIFFERENT
+  ids for any newly-added quest/task/reward (e.g. chapter-intro quests), so the trees silently diverge.
+  Fix: either seed the RNG / derive ids deterministically, OR generate on ONE tree and `cp -r` it over
+  the other, then `diff -rq` both trees and assert empty before shipping. (Hit this adding 20
+  chapter-intro quests to evo2-tech — fixed by copying server→client.)
 - **`ftb-materials` / `ftb-armory` are NOT in evo2-tech** (and FTBIC/Stellaris only *soft*-reference
   them — their `mods.toml` has no hard requirement on `ftbmaterials`). Don't reward `ftbmaterials:*`
   or `ftbarmory:*` items; use each mod's native IDs (`oritech:nickel_ingot`, `stellaris:pipe_t1`, etc.).
@@ -74,3 +81,54 @@ specs. Auto-position quests (first = diamond/size 1.5, last = hexagon "goal", re
 2-column grid), resolve `dep_keys`→IDs inline (deps always point to earlier quests), emit positive-long hex
 IDs (`secrets.randbits(63)`), dump with `json.dump`. ~21 chapters / 146 quests generated cleanly with zero JSON errors.
 Validate afterward with `json.load` on every `.json5` glob.
+
+## Deploying quest changes to a LIVE server (progress-safe)
+The live book lives at `<itzg-data>/config/ftbquests/quests/` (e.g.
+`/home/ruben/homeserver/minecraft-evo2tech/data/config/ftbquests/quests/`). FTB Quests
+re-serializes these files to unquoted-key JSON5 on first load, but **quest/task/reward IDs are
+stable** — only formatting changes. So overwriting with clean source files is safe.
+
+1. **Progress-safety check FIRST.** Before touching anything, diff live vs source quest IDs and
+   assert ZERO ids exist only in live (a dropped id = lost player progress). New additive ids
+   (intro quests) are fine. Parse both trees with a lenient JSON5 loader (strip `//`, trailing
+   commas, unquote keys) and compare `quests[].id` per chapter file.
+2. **Back up** the live quest dir: `cp -r <live> <live>.bak-$(date +%Y%m%d-%H%M%S)`.
+3. **Deploy:** `docker stop <container>` → `cp -r <src>/quests/. <live>/quests/` → `docker start`.
+   (Stop first so the world saves and no file races; FTB Quests reads config only at boot.)
+4. **Verify via the log line**, not just container health:
+   `[FTB Quests/] Loaded <N> chapter groups, <N> chapters, <N> quests, <N> reward tables`.
+   Quest count should equal old + new-intros, and there must be **no "Unnamed" / reassignment
+   warnings**. `docker logs --since 3m ... | grep -i "FTB Quests"`.
+5. **Non-gating intros don't lock players.** A "Welcome to [Mod]" intro quest with a checkmark
+   task and NO incoming dependencies is purely additive — existing players keep all progress and
+   just see a new top node to check. Only *structural* changes (new gating deps, removing/renaming
+   quest ids) risk locking/rekeying progress. For a LIVE pack, prefer additive polish (rich
+   descriptions, intro quests, reward bumps) over structural rewiring.
+
+## Shipping updated quest files into existing archives
+The pack ships as a client `.mrpack` (Prism, `modrinth.index.json` + `overrides/`) and a server
+`.zip` (flat `config/` + `mods/`). Both bundle the FULL generated config tree — which the
+hand-maintained `client/config/` + `server/config/` source dirs do NOT contain. So **never rebuild
+the archive from source**; surgically replace only the quest entries instead, preserving everything
+else (the other mods' generated configs, `modrinth.index.json`, and the client-only
+`config/ftbquests-client.json5`):
+
+```python
+import zipfile, os
+SRC = "/path/to/.../server/config/ftbquests/quests"   # quest dir (identical in both builds)
+PREFIX = "overrides/config/ftbquests/quests/"          # .mrpack; use "config/ftbquests/quests/" for a flat .zip
+entries = {}
+for dp, _, fns in os.walk(SRC):
+    for fn in fns:
+        rel = os.path.relpath(os.path.join(dp, fn), SRC).replace(os.sep, "/")
+        entries[PREFIX + rel] = open(os.path.join(dp, fn), "rb").read()
+tmp = ARCHIVE + ".tmp"
+zin, zout = zipfile.ZipFile(ARCHIVE), zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED)
+for item in zin.infolist():
+    zout.writestr(item, entries.get(item.filename, zin.read(item.filename)))  # replace or copy
+zin.close(); zout.close(); os.replace(tmp, ARCHIVE)
+```
+
+Deliver the client `.mrpack` by dropping it in `~/homeserver/www/` → served at
+`https://oathless.dev/files/<name>` (Caddy `handle_path /files/*` → `root * /srv/www`). Verify with
+`zipfile.testzip()` + a `curl -sI` for HTTP 200 before telling the user it shipped.

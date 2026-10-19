@@ -7,16 +7,21 @@ description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-s
 # Minecraft Server Operations
 
 Operational knowledge for running Ruben's self-hosted Minecraft server(s) on the
-OptiPlex homelab. The primary instance is the custom **evo2-tech** pack
-(`minecraft-evo2tech`, itzg/minecraft-server:java25, TYPE=NEOFORGE, VERSION=26.1.2,
-NEOFORGE_VERSION=26.1.2.109, 12G RAM) on 25565 = mc.oathless.dev — it replaced FTB
-Evolution 2 (`minecraft-evo2`, retired; data archived at `homeserver/minecraft-evo2-archive/`).
+OptiPlex homelab. The primary instance is **All The Mods 11** (`minecraft-atm11`, itzg/minecraft-server:java25,
+TYPE=AUTO_CURSEFORGE, CF_SLUG=all-the-mods-11, pinned 0.12.0-beta via CF_FILE_ID=9187064,
+NeoForge 26.1.2.109, 12G RAM) on 25565 = mc.oathless.dev. Its world is bind-mounted from
+`~/atm11-world` (migrated off the remote ATM server via scp; `level-name=world` → `/data/world`
+bind-mount). Manual adds (drop into `data/mods/`, survive the CF sync): Hephaestus Forge +
+Hephaestus Tools + PlayerAnimationLib + Nautec 2 + Chunky 1.5.4 + C2ME. Earlier experiments are
+archived: FTB Evolution 2 (`minecraft-evo2-archive2` + the older `minecraft-evo2-archive`),
+evo2-tech (`minecraft-evo2tech-archive`).
 Historical/retired servers still referenced as running examples in several reference files:
 Enigmatica 10 (`minecraft-e10`), the Oathless Server Pack (`minecraft-oathlesssp`), and ATM10
 Aeronautics (`minecraft-atm10aero`). Hardware: i5-9500T (6c/6t, 35W T-series), 30GB RAM, NVMe.
 
 ## Key facts / mental model
 
+- **Which server is the user asking about? CONFIRM before diagnosing.** Ruben runs at least TWO MC servers: (1) the homelab `minecraft-evo2tech` (evo2-tech pack, itzg docker — its logs show `/data/...` container paths or `/home/ruben/homeserver/...` host paths), and (2) a separately-hosted **All The Mods (ATM)** server on a remote panel (Pterodactyl-style — its logs show `file:/home/container/mods/...` paths). The `/home/container/` path in a pasted log is the fingerprint of the REMOTE host, NOT the homelab. Never run homelab diagnostics (docker stats, `chunky` task state, CPU governor) against a log from the remote ATM server — that produces a wrong diagnosis (verified: I misattributed an ATM lag log to the homelab box and analyzed the wrong CPU/chunky state). Ask/confirm which server if the log path isn't visible.
 - **Minecraft's tick loop is single-threaded.** CPU single-core speed is the binding
   constraint, not RAM or core count. A low-power T-series chip with a `powersave`
   governor is the worst case for a heavy pack.
@@ -423,7 +428,7 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
   incompatible with 'radium'` and refuses to load. On a Create pack, drop Radium entirely;
   Noisium + Saturn + ServerCore + ModernFix carry the tick-loop wins. Don't blind-add
   "Lithium/Radium" to a Create pack.
-- **C2ME on MC 26.1.2 (NeoForge, evo2-tech) thread-explodes and deadlocks Chunky pregen — do NOT add it.** The 1.21.1 C2ME success (~47 cps on ATM10/E10) does NOT generalize to 26.1.2 with heavy worldgen (Tectonic + Lithostitched + TerraBlender + Stellaris). Verified Oct 2026: after a clean boot + a 2–3× rate boost, the java process ballooned to **8,199 threads** (normal ≈ 150), memory climbed past the 12G heap into swap (5.4G swap used), the tick loop fell 124 ticks behind (`Can't keep up!`), and Chunky froze at the same chunk for 25+ min — CPU dropped to ~23% with the box idle (a deadlock, not a CPU bottleneck). Fix: `rm` the C2ME jar + restart (thread count returns to ~157), then `chunky continue` (skips done chunks). Spot the failure: `docker stats` PIDS in the thousands + swap climbing + `chunky progress` frozen at a fixed `Processed:` count across polls. Single-threaded baseline on evo2-tech is ~11–16 cps, NOT the 4.6 cps of older packs.
+- **C2ME on MC 26.1.2 is PACK-SPECIFIC — it deadlocked evo2-tech but runs clean on FTB Evolution 2 1.3.2 (same MC, same worldgen stack).** The 1.21.1 success (~47 cps on ATM10/E10) does NOT generalize to every 26.1.2 pack — and neither does the deadlock: the trigger is the pack's mod SET, not heavy worldgen (Tectonic + Lithostitched + TerraBlender + Stellaris) per se. Don't refuse C2ME for 26.1.2 by rote; add it, then watch for the thread-explosion signature and rip it out if it recurs. On evo2-tech, verified Oct 2026: after a clean boot + a 2–3× rate boost, the java process ballooned to **8,199 threads** (normal ≈ 150), memory climbed past the 12G heap into swap (5.4G swap used), the tick loop fell 124 ticks behind (`Can't keep up!`), and Chunky froze at the same chunk for 25+ min — CPU dropped to ~23% with the box idle (a deadlock, not a CPU bottleneck). Fix: `rm` the C2ME jar + restart (thread count returns to ~157), then `chunky continue` (skips done chunks). Spot the failure: `docker stats` PIDS in the thousands + swap climbing + `chunky progress` frozen at a fixed `Processed:` count across polls. Single-threaded baseline on evo2-tech is ~11–16 cps, NOT the 4.6 cps of older packs. **Counter-example (Oct 2026): FTB Evolution 2 1.3.2 — 426 mods, ships the SAME worldgen stack (Tectonic + Lithostitched + TerraBlender + Stellaris) — ran the SAME C2ME build cleanly: ~9→30 cps (~3×), threads steady ~153, 0 `Can't keep up!`, memory flat ~12.15 GiB, ETA 18–25h → ~5h.** **Second counter-example (same session, Oct 2026): ATM 11 0.12.0-beta (293 mods, same worldgen stack) ran the SAME C2ME build cleanly too — ~27–37 cps, threads ~150, 0 `Can't keep up!`, no freeze, ETA ~11h for a radius-10000 pregen.** So the evo2-tech culprit was its unique mod set (Create/Mekanism/etc.), not the worldgen stack. Note: under heavy C2ME load `rcon-cli 'chunky progress'` can return EMPTY (the progress response goes to the server log instead) — read the live rate from `docker logs --tail 200 | grep -oE 'Processed: [0-9]+ chunks' | tail -1`.
 - **C2ME conflicts with `betterchunkloading`** — adding C2ME to a pack that ships someaddon's
   betterchunkloading produces an FML `discouragedmod` warning (`[betterchunkloading; c2me] ... causes the
   world to save infinitely`) plus a mixin `InvalidInjectionException` on `DistanceManager`. Remove
@@ -461,10 +466,11 @@ For a *from-scratch* pack (not a published CF pack), the lazy-correct path is
  stop/crash keywords, do NOT include `shutdown` or `reboot` in the pattern — the terminal tool
  hardline-blocks ANY command containing those words, even inside a `grep -iE '…'` regex (so
  `grep -iE 'stopping|shutdown|crash'` is refused outright). Use `stopping|stop|crash|fatal` instead.
+- **Fresh 400+ mod FTB/kitchen-sink boots show `unhealthy` for the first few minutes — it self-heals.** The itzg healthcheck (`mc-health`, interval 30s, `start_period` 120s, retries 2) starts pinging `localhost:25565` 2 min after start, but a 426-mod cold boot takes ~180s (ModernFix logs "Dedicated server took 180s to load"). Pings fail with `connection refused` during boot, exhaust the 2 retries, and mark the container `unhealthy`; once the server finishes booting, the next successful `mc-health` flips it back to `healthy` within ~1 min. Diagnose before panicking: `docker exec <c> mc-health` (returns `version=... online=0 max=...`) + `docker inspect <c> --format '{{.State.Health.Status}}'`. To survive cold boots, raise the image's healthcheck `start_period` or accept the transient.
 - **Installing DH server-side on a small box** — the OLD guidance ("wasteful, keep client-only") is superseded for evo2-tech: Ruben wanted preloaded LODs for his friends, so DH is installed server-side and builds LODs from Chunky-generated chunks (cheap in 3.3.3). To enable: drop the DH jar into `data/mods/` + recreate; Chunky-pregen the real chunks so LODs have data. See the "Key facts" bullet for the config + benign dim warnings.
 - **Enabling RCON on a server that lacks it** (the hand-curated `evo2-tech` `TYPE=NEOFORGE` box ships with RCON OFF, unlike AUTO_CURSEFORGE which enables it by default). To drive `chunky`/console commands remotely, add to the compose service env: `ENABLE_RCON: "true"`, `RCON_PASSWORD: "<random>"`, `RCON_PORT: 25575`, then recreate the container (`docker compose up -d --force-recreate <svc>` in background mode). Verify with `docker exec <c> rcon-cli "seed"` (echoes the world seed).
 - **Background watcher scripts: `exec >>log 2>&1` triggers false "completed" notifications.** A `terminal(background=true, notify_on_complete=true)` process gets reported as `exit code None` ~30s in if the script redirects stdout with `exec` — that closes the pipe the process manager watches. Use `log() { echo "$*" | tee -a "$LOG"; }` and keep the pipe open. Also: `docker logs` is the *full history*, so a completion grep can match a prior boot — poll for a fresh signal (RCON `list` returning `players online`) instead.
-- **Long pregen watchers can get orphaned/reaped while sleeping.** A `sleep 300` polling loop may be reported dead even when the target task (Chunky, running *inside* the server process) is fine. Design the watcher to be re-runnable: killing and relaunching it loses nothing because the actual task lives in the server, not the watcher.
+- **Long pregen watchers can get orphaned/reaped while sleeping.** A `sleep 300` polling loop may be reported dead even when the target task (Chunky, running *inside* the server process) is fine. Design the watcher to be re-runnable: killing and relaunching it loses nothing because the actual task lives in the server, not the watcher. **For pregens over ~10h, prefer a cron `no_agent` single-shot watchdog** (`scripts/pregen-watchdog-cron.sh`, `cronjob` schedule `every 30m`) over the terminal-background loop — a cron tick survives where a multi-hour `sleep` gets reaped, and it only sends a message on completion/failure (empty stdout = silent; marker + state files dedupe; it also flags C2ME thread-explosion >1000 PIDs and a frozen `Processed:` count). For pregens expected to run 10+ hours, prefer a **cron no_agent watchdog** over a terminal background process — `scripts/pregen-completion-check.sh` is a single-shot check (marker-file dedup, silent unless done/failed); register it with `cronjob(action=create, no_agent=true, schedule="every 30m", script="pregen-completion-check.sh")`. It re-checks `chunky progress` + the server log's `Task finished` line every tick and is immune to the background-process reaping that kills multi-hour `chunky-watch.sh` runs.
 - **"No 'can't keep up' yet = fine"** — a fresh 5MB world proves nothing; stress only shows after exploration.
 - **Recreating a container after a compose change (ports/env/volumes):** `docker compose up -d` is
   refused by the terminal tool (long-lived-process guard) in FOREGROUND — but `terminal(background=true)` on `docker compose up -d <svc>` lets it through (it's a detached one-shot returning in ~1s, so background mode is fine and simpler than the rm/create/start dance; verified Oct 2026). And `docker start <name>` does NOT apply
@@ -497,7 +503,35 @@ For 2+ servers on one IP, players default to port 25565 — a second server on 2
 Two layers: RCON (`whitelist on`/`whitelist add`) is instant; `WHITELIST` + `ENFORCE_WHITELIST` env vars persist across recreation. To add a player durably, do BOTH: RCON `whitelist add` (instant) AND append to the compose `WHITELIST` env var (survives recreate). `OVERRIDE_WHITELIST` is unset (default false) on this box, so the env var never clobbers RCON-added names — the two stay consistent. `ENFORCE_WHITELIST` is ignored when `OVERRIDE_SERVER_PROPERTIES=false` — use RCON then. "That player does not exist" = invalid Mojang username (verify via `api.mojang.com/users/profiles/minecraft/<name>`).
 
 ### RCON console + TPS
-`docker exec <c> rcon-cli "<cmd>"` gives a full console with no panel. TPS via RCON: `debug start` → sleep → `debug stop` (`spark tps` returns empty via RCON — chat-only output). **OP/deop: there is NO vanilla `op list` command.** `rcon-cli "op list"` is parsed as `op <player>` with a player literally named "list" — it silently OPs a bogus `list` entry in `data/ops.json` (which even gets a UUID). To list operators, read `data/ops.json` directly; revoke a bad entry with `deop <name>`. OP status is a plain JSON data file (persists across restarts; no compose env var like `WHITELIST`).
+`docker exec <c> rcon-cli "<cmd>"` gives a full console with no panel. TPS via RCON: `debug start` → sleep → `debug stop`. (`spark tps` console output is VERSION-DEPENDENT — spark 1.10.x logs TPS + tick durations + CPU to console via RCON, older builds were chat-only and returned empty via RCON. If empty, fall back to `debug start`/`debug stop` or `spark healthreport`.) **OP/deop: there is NO vanilla `op list` command.** `rcon-cli "op list"` is parsed as `op <player>` with a player literally named "list" — it silently OPs a bogus `list` entry in `data/ops.json` (which even gets a UUID). To list operators, read `data/ops.json` directly; revoke a bad entry with `deop <name>`. OP status is a plain JSON data file (persists across restarts; no compose env var like `WHITELIST`).
+
+### Spark profiler for lag diagnosis — capture the trigger IN SITU
+
+The single biggest trap when diagnosing "server laggy" with spark: running the profiler on an
+EMPTY/paused server. It returns a flawless 20.0 TPS / ~0.3ms median tick / ~0% CPU and a flat
+profile — which proves nothing, because the lag (chunk generation from exploring players) only
+exists while players are online and moving into fresh territory. A 60s profile of an idle server
+is a wasted measurement. Correct sequence:
+
+1. `spark tps` — read the 5s/10s/1m/5m/15m windows. 20.0 across all windows on an empty server
+   = healthy idle, NOT a fix. Compare median tick ms against the 50ms-per-tick budget
+   (0.3ms median ≈ 0.6% used = lots of headroom).
+2. `spark healthreport --memory` — returns a `spark.lucko.me/<id>` URL (health + memory summary).
+3. `spark profiler start --timeout 300` — run WHILE 1+ players are online and moving into
+   FRESH chunks (flying/boating into unexplored territory is the exact trigger that produced the
+   `Can't keep up! ... 329 ticks behind` spikes). 5 min gives the lag time to happen; 60s on an
+   empty server won't.
+4. Open the resulting `spark.lucko.me/<id>` flame graph → sort by **Server thread** → the culprit
+   shows up under `MinecraftServer` / `ServerLevel` / `NoiseChunk` / `ChunkGenerator` / a mod's
+   worldgen class.
+
+Reading the tick-duration line (`min/med/95%ile/max`): a big `max` (e.g. 40.9ms) with a tiny median
+on an otherwise-idle server is the periodic autosave spike (one chunk-save pass ~every 19 min) —
+harmless. A consistently HIGH median = real tick-loop load.
+
+Benign spark warnings, safe to ignore: "WARNING: A Java agent has been loaded dynamically" and
+"A restricted method in java.lang.System has been called ... java.lang.System::load ... Use
+--enable-native-access=spark" — both are spark loading its async-profiler native agent on modern JVMs.
 
 ### Giving items / finding a mod item's registry ID
 
@@ -644,3 +678,4 @@ missing client-side. Crop configs are NOT synced; ship them to every client.)
 - `scripts/pregen-dh-watch.sh` — combined watcher: Chunky → DH LOD pregen in one background job. Polls Chunky to 100% (StartedAt-guarded), then `dh pregen start minecraft:overworld 0 0 <chunkRadius>` and polls `/dh pregen status` until it returns to "Pregen is not running". Exit 0 = both done; 1 = lost task or DH failed to start. Args: `<container> [dh_chunk_radius]` (default minecraft-evo2tech, 200). Pair with terminal background=true + notify_on_complete=true.
 - `references/from-scratch-custom-pack.md` — build a NEW custom pack by curating a subset of an existing pack's mods: workflow, dependency gotchas (Radium×Create, BOP/Tectonic/AdAstra deps, Placebo dual-use), Plasmo Voice×Sable UDP conflict, Iris-vs-Oculus on 1.21.1, self-contained CF-zip/mrpack build, Forgejo large-binary distribution.
 - `references/custom-modpack-build.md` — build a from-scratch curated pack: subset-copy workflow, boot-iterate loop, keyless Modrinth download pattern, 1.21.1 dependency map, SRV routing, client-zip merge.
+- `references/atm11-deploy-and-world-migration.md` — deploy ATM 11 (CF slug `all-the-mods-11` + `CF_FILE_ID` pin, the 6 added mods with CF ids/deps), migrate an existing world onto the box via scp + `/data/world` bind-mount (verify world `dimensions/` against the pack modlist, split-brain warning), and the no_agent cron progress-reporter for 10h+ pregens.

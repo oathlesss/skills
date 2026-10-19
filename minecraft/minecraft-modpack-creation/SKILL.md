@@ -208,8 +208,12 @@ Find the `<id>/<slug>` via `web_search "<pack name> modpackindex"`. Two gotchas:
   for "ATM10-like but no Apotheosis" or any "which packs avoid mod X" question.
 - `references/ftb-quests-authoring.md` — how to author an FTB Quests 2001.x JSON5 quest book for 26.1.2
   (chapter/quest/lang file structure, the `id: "..."` item-ID-oracle grep, Python `json.dump`
-  generation) and Ruben's reward preferences: no FTB coin currency, XP + small useful item rewards,
-  per-player `team_reward: false`. Use when a pack needs quests/chapters.
+  generation), Ruben's reward preferences (no FTB coin currency, XP + small useful item rewards,
+  per-player `team_reward: false`), PLUS the two non-obvious follow-throughs: deploying quest changes
+  to a LIVE itzg server progress-safely (ID-diff check, stop/copy/start, verify the "Loaded N quests"
+  log line) and surgically injecting updated quest files into existing zip/.mrpack archives without
+  rebuilding the full generated config tree. Use when a pack needs quests/chapters, or when shipping
+  a quest update.
 - `references/puffish-skills-and-magic-integration.md` — Puffish Skills + Paxi datapack delivery,
   category.json required fields (incl. the mandatory `background` tile), per-category XP source event
   types (`mine_block`/`#c:ores`, `increase_stat`, `criterion`, `deal_damage`/`kill_entity`/
