@@ -1,10 +1,12 @@
 ---
 name: minecraft-server-ops
 category: minecraft
-description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-server on a homelab box): assess whether hardware can handle a modpack, tune performance, pre-generate the world, manage Distant Horizons LODs, add/remove mods on an AUTO_CURSEFORGE container, add voice chat (Plasmo Voice) with its UDP port, and export the pack as an importable CurseForge .zip or Modrinth .mrpack. Trigger on server performance questions, 'can my server run this pack', pregen, world generation, Distant Horizons, mod-management requests, voice chat setup, or 'make the pack importable'."
+description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-server on a homelab box): assess whether hardware can handle a modpack, tune performance, pre-generate the world, manage Distant Horizons LODs, add/remove mods on an AUTO_CURSEFORGE container, add voice chat (Plasmo Voice) with its UDP port, and export the pack as an importable CurseForge .zip or Modrinth .mrpack. Trigger on server performance questions, 'can my server run this pack', pregen, world generation, Distant Horizons, mod-management requests, voice chat setup, 'make the pack importable', or 'which config controls/disables a feature in the pack'."
 ---
 
 # Minecraft Server Operations
+
+> **Config hunting & mod-jar inspection** (e.g. "which config disables X", identifying which mod owns an effect/item): `references/modpack-config-and-jar-inspection.md`.
 
 Operational knowledge for running Ruben's self-hosted Minecraft server(s) on the
 OptiPlex homelab. The primary instance is **All The Mods 11** (`minecraft-atm11`, itzg/minecraft-server:java25,
