@@ -6,6 +6,8 @@ description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-s
 
 # Minecraft Server Operations
 
+> **FTB Chunks claim protection** (allow building/interacting but keep explosion/mob-griefing protection) is a TWO-place change: config defaults (`team_prop_defaults`) affect only *new* teams, while *existing* teams keep per-team snapshots in `world/ftbteams/player/<uuid>.json5`. Full field map, safe stop→edit→start procedure, and the shutdown-hang-on-save pitfall: `references/ftbchunks-claims.md`.
+
 > **Config hunting & mod-jar inspection** (e.g. "which config disables X", identifying which mod owns an effect/item): `references/modpack-config-and-jar-inspection.md`.
 
 Operational knowledge for running Ruben's self-hosted Minecraft server(s) on the
