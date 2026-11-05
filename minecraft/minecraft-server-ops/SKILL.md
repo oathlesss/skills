@@ -6,6 +6,12 @@ description: "Administer a self-hosted Minecraft server (itzg docker-minecraft-s
 
 # Minecraft Server Operations
 
+> **Two server stacks live under this skill.** (1) **itzg docker-minecraft** — the modded
+> ATM11 server and any CurseForge/Modrinth pack in Docker (the bulk of this file).
+> (2) **Horizon** — a native Rust *vanilla* server (no Java, no Docker, no mods); setup,
+> the client-file prepare gotcha, and the launcher-download replication are in
+> `references/horizon-rust-server.md`.
+
 > **FTB Chunks claim protection** (allow building/interacting but keep explosion/mob-griefing protection) is a TWO-place change: config defaults (`team_prop_defaults`) affect only *new* teams, while *existing* teams keep per-team snapshots in `world/ftbteams/player/<uuid>.json5`. Full field map, safe stop→edit→start procedure, and the shutdown-hang-on-save pitfall: `references/ftbchunks-claims.md`.
 
 > **Config hunting & mod-jar inspection** (e.g. "which config disables X", identifying which mod owns an effect/item): `references/modpack-config-and-jar-inspection.md`.
