@@ -100,3 +100,24 @@ Handshake (packet 0x00: varint protocol + host string + port u16 + next-state 1)
 request (packet 0x00). Response JSON carries `version.protocol` (777 for 26.3), MOTD, players.
 A working reference implementation lives at `~/horizon-setup/ping.py` on the homelab.
 Gotcha: don't double the packet-id varint (packet id goes in the frame only, not the body).
+Also: the status-response JSON string is length-prefixed by a **varint**, not a single byte —
+MOTD/version JSON is usually >127 bytes so the length varint is 2 bytes; reading `payload[0]`
+as the length yields a JSONDecodeError. Reuse `~/horizon-setup/ping.py` (parses it correctly).
+
+## 6. Change port / replace an existing server
+
+- The port is `server.toml` `[server] port = N`. **Edit `server.toml`, never `server.properties`**
+  — Horizon regenerates `server.properties` from `server.toml` before every start, so a
+  hand-edit there is silently overwritten. Then `horizon-server restart`.
+- To take over a port vacated by another server, free it FIRST (`docker stop <old> && docker
+  rm <old>`), then edit `server.toml`, then restart — otherwise the engine fails to bind.
+- Binds IPv4 only (`0.0.0.0:<port>`, no `[::]`) — fine for a router port-forward to the
+  internal IPv4.
+- **Migrate the whitelist** so players aren't locked out: loop
+  `horizon-server whitelist add <name>` per name (online-mode resolves UUIDs via Mojang),
+  then `horizon-server whitelist list` to confirm. `whitelist.json` stores uuid+name;
+  `ops.json` the op level (default op level 4).
+- Full container-removal + compose-edit + data-preservation flow:
+  `references/server-replacement-decommission.md`.
+- **Mods, native server export, and far terrain (LOD/pregen):**
+  `references/horizon-mods-far-terrain.md`.
