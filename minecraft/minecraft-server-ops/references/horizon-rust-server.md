@@ -11,6 +11,10 @@ No official Docker image. Single author, very young project (Oct 2026). The dedi
 loads the full client render assets at startup (hence the prepare step needs the whole client),
 so idle RAM (~250 MB) is higher than vanilla-Java's but still tiny vs a modded pack.
 
+Two companion references cover the post-setup topics:
+- **mods + far terrain (LOD/pregen):** `horizon-mods-far-terrain.md`
+- **decommission / replace a server:** `server-replacement-decommission.md`
+
 ## 1. Install (Linux x86-64)
 
 ```sh
@@ -98,26 +102,37 @@ panel login link, default `127.0.0.1:8130`), `mcp` (agent control), `update`/`ro
 
 Handshake (packet 0x00: varint protocol + host string + port u16 + next-state 1), then status
 request (packet 0x00). Response JSON carries `version.protocol` (777 for 26.3), MOTD, players.
-A working reference implementation lives at `~/horizon-setup/ping.py` on the homelab.
-Gotcha: don't double the packet-id varint (packet id goes in the frame only, not the body).
-Also: the status-response JSON string is length-prefixed by a **varint**, not a single byte —
-MOTD/version JSON is usually >127 bytes so the length varint is 2 bytes; reading `payload[0]`
-as the length yields a JSONDecodeError. Reuse `~/horizon-setup/ping.py` (parses it correctly).
+A working reference implementation lives at `~/horizon-setup/ping.py` on the homelab (also copied
+into this skill's `scripts/horizon-ping.py`).
 
-## 6. Change port / replace an existing server
+Ping gotchas:
+- don't double the packet-id varint (packet id goes in the frame only, not the body).
+- the status response's string length is a **varint, not one byte** — MOTD/version JSON over
+  127 bytes has a 2-byte length prefix, so reading `payload[0]` truncates it and `json.loads`
+  fails with "Expecting value". Parse the string length as a varint.
+- `description` is a plain STRING, not always `{text:…}` — handle `str | dict` when parsing.
+
+## 6. Change port / whitelist / replace server
 
 - The port is `server.toml` `[server] port = N`. **Edit `server.toml`, never `server.properties`**
-  — Horizon regenerates `server.properties` from `server.toml` before every start, so a
+  — the supervisor regenerates `server.properties` from `server.toml` before every start, so a
   hand-edit there is silently overwritten. Then `horizon-server restart`.
-- To take over a port vacated by another server, free it FIRST (`docker stop <old> && docker
-  rm <old>`), then edit `server.toml`, then restart — otherwise the engine fails to bind.
-- Binds IPv4 only (`0.0.0.0:<port>`, no `[::]`) — fine for a router port-forward to the
-  internal IPv4.
-- **Migrate the whitelist** so players aren't locked out: loop
-  `horizon-server whitelist add <name>` per name (online-mode resolves UUIDs via Mojang),
-  then `horizon-server whitelist list` to confirm. `whitelist.json` stores uuid+name;
-  `ops.json` the op level (default op level 4).
-- Full container-removal + compose-edit + data-preservation flow:
-  `references/server-replacement-decommission.md`.
-- **Mods, native server export, and far terrain (LOD/pregen):**
-  `references/horizon-mods-far-terrain.md`.
+- To take over a port vacated by another server, free it FIRST (`docker stop <old> && docker rm <old>`),
+  then edit `server.toml`, then restart — otherwise the engine fails to bind.
+- Binds IPv4 only (`0.0.0.0:<port>`, no `[::]`) — fine for a router port-forward to the internal IPv4.
+- **Migrate the whitelist** so players aren't locked out: loop `horizon-server whitelist add <name>`
+  (online-mode resolves UUIDs via Mojang), then `horizon-server whitelist list` to confirm.
+  `whitelist.json` stores uuid+name; `ops.json` the op level (default 4).
+- Full container-removal + compose-edit + data-preservation flow: `server-replacement-decommission.md`.
+
+## 7. Reset to a fresh world
+
+```sh
+horizon-server stop
+mv world "world-bak-$(date +%Y%m%d-%H%M%S)"   # keep the old world (reversible)
+# edit server.toml: [server] max_view_distance; [properties] horizon-pregen / horizon-lod-distance
+horizon-server start                            # fresh world generates (~12–20 s)
+horizon-server cmd seed                         # capture the seed (random if seed="" was left empty)
+horizon-server cmd pregen start <radius>        # optional; see horizon-mods-far-terrain.md
+```
+Verify applied config: `grep -E 'horizon-|max-view-distance|server-port' server.properties`.
